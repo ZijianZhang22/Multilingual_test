@@ -146,6 +146,52 @@ def evaluate_source_diagnostics(
     }
 
 
+def evaluate_forgetting(
+    model,
+    aux_eval_blocks,
+    aux_baselines,
+    eval_batch,
+    device,
+    use_bf16,
+    branch,
+    tokens_seen,
+    requested_mark,
+    forgetting_rows,
+):
+    """
+    Measure old-language retention while the model learns the target language.
+
+    Forgetting is defined as:
+        current held-out source loss - pre-target held-out source loss
+
+    Positive values mean forgetting; negative values mean improvement.
+    """
+    row = {
+        "branch": branch,
+        "target_tokens_seen": tokens_seen,
+        "requested_mark": requested_mark,
+    }
+
+    parts = []
+    for lang, blocks in aux_eval_blocks.items():
+        loss, ppl = evaluate(model, blocks, eval_batch, device, use_bf16)
+        baseline = aux_baselines[lang]
+        forgetting = loss - baseline
+        row[f"{lang}_val_loss"] = loss
+        row[f"{lang}_perplexity"] = ppl
+        row[f"{lang}_forgetting"] = forgetting
+        parts.append(
+            f"{lang.upper()} loss={loss:.4f} "
+            f"forgetting={forgetting:+.4f}"
+        )
+
+    forgetting_rows.append(row)
+    print(
+        f"[{branch}] RETENTION target_tokens={tokens_seen:,} "
+        f"(mark {requested_mark}) | " + " | ".join(parts)
+    )
+
+
 def train_stream(
     model,
     blocks,
@@ -163,6 +209,9 @@ def train_stream(
     branch=None,
     stage=None,
     metrics_rows=None,
+    aux_eval_blocks=None,
+    aux_baselines=None,
+    forgetting_rows=None,
 ):
     loader = make_loader(blocks, micro_batch)
     total_opt_steps = math.ceil(len(loader) / grad_accum)
@@ -184,6 +233,19 @@ def train_stream(
             "perplexity": ppl,
         })
         print(f"[{branch}] target_tokens=0 val_loss={val_loss:.4f} ppl={ppl:.2f}")
+        if aux_eval_blocks is not None:
+            evaluate_forgetting(
+                model,
+                aux_eval_blocks,
+                aux_baselines,
+                eval_batch,
+                device,
+                use_bf16,
+                branch,
+                0,
+                0,
+                forgetting_rows,
+            )
         next_mark_idx = 1
 
     model.train()
@@ -228,6 +290,19 @@ def train_stream(
                         f"[{branch}] target_tokens={tokens_seen:,} (mark {mark:,}) "
                         f"val_loss={val_loss:.4f} ppl={ppl:.2f}"
                     )
+                    if aux_eval_blocks is not None:
+                        evaluate_forgetting(
+                            model,
+                            aux_eval_blocks,
+                            aux_baselines,
+                            eval_batch,
+                            device,
+                            use_bf16,
+                            branch,
+                            tokens_seen,
+                            mark,
+                            forgetting_rows,
+                        )
                     next_mark_idx += 1
 
     if eval_blocks is not None:
@@ -247,6 +322,19 @@ def train_stream(
                 f"[{branch}] FINAL target_tokens={tokens_seen:,} "
                 f"val_loss={val_loss:.4f} ppl={ppl:.2f}"
             )
+            if aux_eval_blocks is not None:
+                evaluate_forgetting(
+                    model,
+                    aux_eval_blocks,
+                    aux_baselines,
+                    eval_batch,
+                    device,
+                    use_bf16,
+                    branch,
+                    tokens_seen,
+                    "final",
+                    forgetting_rows,
+                )
 
     # Crucial: source optimizer state is NOT reused for target adaptation.
     del opt, sched
@@ -273,6 +361,20 @@ def write_source_diagnostics(path, rows):
         "en_val_loss", "en_perplexity",
         "zh_val_loss", "zh_perplexity",
         "target_val_loss_before_target", "target_perplexity_before_target",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for row in rows:
+            w.writerow({k: row.get(k, "") for k in fields})
+
+
+def write_forgetting_metrics(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "branch", "target_tokens_seen", "requested_mark",
+        "en_val_loss", "en_perplexity", "en_forgetting",
+        "zh_val_loss", "zh_perplexity", "zh_forgetting",
     ]
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -364,6 +466,7 @@ def main():
 
     all_rows = []
     diagnostic_rows = []
+    forgetting_rows = []
 
     for branch in args.branches:
         print("\n" + "=" * 80)
@@ -402,21 +505,25 @@ def main():
 
         # NEW: diagnose whether the source treatment created a measurable state
         # difference before any target-language optimization occurs.
-        diagnostic_rows.append(
-            evaluate_source_diagnostics(
-                model,
-                en_val,
-                zh_val,
-                target_val,
-                args.eval_batch,
-                device,
-                use_bf16,
-                branch,
-            )
+        diagnostic = evaluate_source_diagnostics(
+            model,
+            en_val,
+            zh_val,
+            target_val,
+            args.eval_batch,
+            device,
+            use_bf16,
+            branch,
         )
+        diagnostic_rows.append(diagnostic)
         write_source_diagnostics(
             out_dir / "source_diagnostics.csv", diagnostic_rows
         )
+
+        source_baselines = {
+            "en": diagnostic["en_val_loss"],
+            "zh": diagnostic["zh_val_loss"],
+        }
 
         if args.save_models:
             source_dir = out_dir / branch / "source_model"
@@ -445,6 +552,9 @@ def main():
             branch=branch,
             stage="target",
             metrics_rows=all_rows,
+            aux_eval_blocks={"en": en_val, "zh": zh_val},
+            aux_baselines=source_baselines,
+            forgetting_rows=forgetting_rows,
         )
 
         if args.save_models:
@@ -454,11 +564,15 @@ def main():
             tok.save_pretrained(final_dir)
 
         write_metrics(out_dir / "metrics.csv", all_rows)
+        write_forgetting_metrics(
+            out_dir / "forgetting_metrics.csv", forgetting_rows
+        )
         del model
         torch.cuda.empty_cache()
 
     print(f"\nDone. Target metrics: {out_dir / 'metrics.csv'}")
     print(f"Source diagnostics: {out_dir / 'source_diagnostics.csv'}")
+    print(f"Forgetting metrics: {out_dir / 'forgetting_metrics.csv'}")
 
 
 if __name__ == "__main__":
