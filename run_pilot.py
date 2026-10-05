@@ -22,6 +22,28 @@ def load_blocks(path):
     return obj["input_ids"].long()
 
 
+def split_source_train_val(blocks, val_fraction=0.05, split_seed=2026):
+    """
+    Deterministically reserve a small held-out subset for source-language diagnostics.
+
+    The split is fixed across experimental seeds by default, so EN/ZH validation
+    losses are directly comparable across branches and runs.
+    """
+    if not (0.0 < val_fraction < 0.5):
+        raise ValueError("--source_val_fraction must be between 0 and 0.5")
+
+    n = len(blocks)
+    n_val = max(1, int(round(n * val_fraction)))
+    if n_val >= n:
+        raise ValueError("source validation split is too large for the prepared data")
+
+    g = torch.Generator().manual_seed(split_seed)
+    perm = torch.randperm(n, generator=g)
+    val_idx = perm[:n_val]
+    train_idx = perm[n_val:]
+    return blocks[train_idx], blocks[val_idx]
+
+
 def make_source_order(en, zh, branch, seed):
     n = min(len(en), len(zh))
     en, zh = en[:n], zh[:n]
@@ -83,6 +105,45 @@ def evaluate(model, val_blocks, batch_size, device, use_bf16):
     ppl = math.exp(mean_loss) if mean_loss < 20 else float("inf")
     model.train()
     return mean_loss, ppl
+
+
+def evaluate_source_diagnostics(
+    model,
+    en_val,
+    zh_val,
+    target_val,
+    eval_batch,
+    device,
+    use_bf16,
+    branch,
+):
+    """
+    Evaluate each branch immediately after its source-history stage and BEFORE
+    target-language training.
+
+    This tells us whether the source treatment actually created distinguishable
+    models before asking whether it changes future target-language plasticity.
+    """
+    en_loss, en_ppl = evaluate(model, en_val, eval_batch, device, use_bf16)
+    zh_loss, zh_ppl = evaluate(model, zh_val, eval_batch, device, use_bf16)
+    target_loss, target_ppl = evaluate(model, target_val, eval_batch, device, use_bf16)
+
+    print(
+        f"[{branch}] PRE-TARGET DIAGNOSTICS | "
+        f"EN loss={en_loss:.4f} ppl={en_ppl:.2f} | "
+        f"ZH loss={zh_loss:.4f} ppl={zh_ppl:.2f} | "
+        f"TARGET loss={target_loss:.4f} ppl={target_ppl:.2f}"
+    )
+
+    return {
+        "branch": branch,
+        "en_val_loss": en_loss,
+        "en_perplexity": en_ppl,
+        "zh_val_loss": zh_loss,
+        "zh_perplexity": zh_ppl,
+        "target_val_loss_before_target": target_loss,
+        "target_perplexity_before_target": target_ppl,
+    }
 
 
 def train_stream(
@@ -205,6 +266,21 @@ def write_metrics(path, rows):
             w.writerow({k: row.get(k, "") for k in fields})
 
 
+def write_source_diagnostics(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "branch",
+        "en_val_loss", "en_perplexity",
+        "zh_val_loss", "zh_perplexity",
+        "target_val_loss_before_target", "target_perplexity_before_target",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for row in rows:
+            w.writerow({k: row.get(k, "") for k in fields})
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_name", default="Qwen/Qwen2.5-0.5B")
@@ -224,6 +300,18 @@ def main():
     ap.add_argument("--weight_decay", type=float, default=0.1)
     ap.add_argument("--warmup_ratio", type=float, default=0.03)
     ap.add_argument(
+        "--source_val_fraction",
+        type=float,
+        default=0.05,
+        help="Fraction of prepared EN/ZH blocks held out for pre-target diagnostics.",
+    )
+    ap.add_argument(
+        "--source_split_seed",
+        type=int,
+        default=2026,
+        help="Fixed seed for EN/ZH train/diagnostic split; keep constant across runs.",
+    )
+    ap.add_argument(
         "--eval_marks", type=int, nargs="+",
         default=[0, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_000_000],
     )
@@ -239,10 +327,29 @@ def main():
     use_bf16 = (not args.no_bf16) and torch.cuda.is_bf16_supported()
     data_dir = Path(args.data_dir)
 
-    en = load_blocks(data_dir / "en.pt")
-    zh = load_blocks(data_dir / "zh.pt")
+    en_all = load_blocks(data_dir / "en.pt")
+    zh_all = load_blocks(data_dir / "zh.pt")
     target_train = load_blocks(data_dir / "target_train.pt")
     target_val = load_blocks(data_dir / "target_val.pt")
+
+    # Reserve fixed source-language diagnostic blocks. No data re-preparation is needed.
+    en, en_val = split_source_train_val(
+        en_all, args.source_val_fraction, args.source_split_seed
+    )
+    zh, zh_val = split_source_train_val(
+        zh_all, args.source_val_fraction, args.source_split_seed + 1
+    )
+
+    # Keep source training budgets exactly matched after the holdout split.
+    n_source = min(len(en), len(zh))
+    en = en[:n_source]
+    zh = zh[:n_source]
+
+    print(
+        "Source diagnostic split: "
+        f"EN train={len(en):,} blocks / val={len(en_val):,}; "
+        f"ZH train={len(zh):,} blocks / val={len(zh_val):,}"
+    )
 
     # Fixed target order, reused by all branches within a seed.
     g_tgt = torch.Generator().manual_seed(args.seed + 999)
@@ -256,6 +363,7 @@ def main():
         tok.pad_token = tok.eos_token
 
     all_rows = []
+    diagnostic_rows = []
 
     for branch in args.branches:
         print("\n" + "=" * 80)
@@ -291,6 +399,24 @@ def main():
                 device=device,
                 use_bf16=use_bf16,
             )
+
+        # NEW: diagnose whether the source treatment created a measurable state
+        # difference before any target-language optimization occurs.
+        diagnostic_rows.append(
+            evaluate_source_diagnostics(
+                model,
+                en_val,
+                zh_val,
+                target_val,
+                args.eval_batch,
+                device,
+                use_bf16,
+                branch,
+            )
+        )
+        write_source_diagnostics(
+            out_dir / "source_diagnostics.csv", diagnostic_rows
+        )
 
         if args.save_models:
             source_dir = out_dir / branch / "source_model"
@@ -331,7 +457,8 @@ def main():
         del model
         torch.cuda.empty_cache()
 
-    print(f"\nDone. Metrics: {out_dir / 'metrics.csv'}")
+    print(f"\nDone. Target metrics: {out_dir / 'metrics.csv'}")
+    print(f"Source diagnostics: {out_dir / 'source_diagnostics.csv'}")
 
 
 if __name__ == "__main__":
