@@ -91,3 +91,43 @@ A plausible representation picture is not "language-neutral only", but coexisten
 3. Improve/sweep DANN adversarial training because the current DANN representation remains ~99.8% linearly language-decodable.
 4. Add RAW/PCA/random-projection controls.
 5. Only after the above are stable, use the best/most-informative representation metrics to predict forgetting across sequential language adaptation.
+
+
+## 2026-10-05: Full 3-seed transfer/invariance tradeoff sweep
+
+Layer 12, seeds 0/1/2, XNLI EN/ZH/FR.
+
+Aggregate results:
+
+| Config | Mean LOO | Task acc | Language-ID acc |
+|---|---:|---:|---:|
+| raw | 0.5426 ± 0.0038 | 0.5533 ± 0.0009 | 0.9994 ± 0.0000 |
+| INLP-32 | 0.5423 ± 0.0015 | 0.5494 ± 0.0032 | 0.7169 ± 0.0126 |
+| INLP-16 | 0.5373 ± 0.0009 | 0.5476 ± 0.0019 | 0.9225 ± 0.0090 |
+| INLP-8 | 0.5371 ± 0.0049 | 0.5535 ± 0.0022 | 0.9715 ± 0.0017 |
+| INLP-64 | 0.5348 ± 0.0042 | 0.5426 ± 0.0058 | 0.5641 ± 0.0058 |
+| DANN λ=1 | 0.5327 ± 0.0031 | 0.5802 ± 0.0011 | 0.9981 ± 0.0002 |
+| ERM | 0.4940 ± 0.0062 | 0.5617 ± 0.0020 | 0.6135 ± 0.0378 |
+| V-REx | 0.4922 ± 0.0100 | 0.5569 ± 0.0175 | 0.7495 ± 0.1126 |
+| IRM | 0.4854 ± 0.0199 | 0.5644 ± 0.0027 | 0.7334 ± 0.1181 |
+| PCA-64 | 0.4600 ± 0.0080 | 0.4769 ± 0.0074 | 0.9997 ± 0.0000 |
+| RandomProj-64 | 0.3733 ± 0.0139 | 0.3677 ± 0.0133 | 0.9848 ± 0.0049 |
+
+### Key observations
+
+1. Raw layer-12 features are already the strongest LOO baseline (0.5426), confirming that Qwen's pretrained middle-layer representation already contains strong transferable structure.
+2. INLP-32 is statistically/practically tied with raw LOO (0.5423 vs 0.5426) while reducing linear language-ID accuracy from ~99.94% to ~71.69%.
+3. Stronger erasure (INLP-64) lowers language-ID further (~56.4%) but begins to reduce task accuracy and LOO transfer, suggesting over-erasure can remove useful transferable information.
+4. Therefore lower language decodability is not monotonically associated with better transfer. A substantial amount of linearly decodable language identity can be removed with almost no loss of cross-lingual transfer, but removing too much starts to hurt.
+5. DANN λ=1 gives the best all-language task accuracy (~58.0%) but leaves language ID almost perfectly decodable and does not beat raw LOO. Its current benefit appears to be task regularization rather than successful language invariance.
+6. Learned 64-d ERM/IRM/V-REx projections lower some language decodability but lose substantial LOO performance relative to raw, so dimensional compression / task fitting alone is not a sufficient explanation for transfer.
+
+### Stronger working hypothesis
+
+Layer-12 representations appear to contain partly separable components:
+- a transferable/shared task component;
+- a highly decodable language-specific component.
+
+The INLP sweep suggests a useful mechanistic decomposition: approximately 32 rounds of language-direction removal preserve nearly all held-out-language transfer while substantially reducing language identity, whereas stronger removal starts damaging transferable/task information.
+
+This motivates using the INLP removed basis and its residual complement as candidate language-specific vs transferable/shared subspaces in continual-language adaptation. Track each subspace separately across checkpoints and test which drift predicts forgetting.
