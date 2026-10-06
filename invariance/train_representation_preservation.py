@@ -1,13 +1,11 @@
 import argparse
 import csv
 import json
-import math
 import random
 from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -72,13 +70,18 @@ def make_shared_random_basis(q_lang, rank, seed):
     r = torch.randn(
         d, rank, device=q_lang.device, dtype=torch.float32, generator=g
     )
-    # Remove the language-subspace component, then orthonormalize.
     r = r - q_lang @ (q_lang.T @ r)
     q, _ = torch.linalg.qr(r, mode="reduced")
     return q[:, :rank]
 
 
-def projected_mse(delta, mode, q_lang, q_shared_random=None):
+def projected_mse(
+    delta,
+    mode,
+    q_lang,
+    q_shared_random=None,
+    q_transfer=None,
+):
     """Per-dimension MSE so losses are comparable across subspace ranks."""
     delta = delta.float()
 
@@ -86,8 +89,7 @@ def projected_mse(delta, mode, q_lang, q_shared_random=None):
         return delta.pow(2).mean()
 
     if mode == "lang":
-        coords = delta @ q_lang
-        return coords.pow(2).mean()
+        return (delta @ q_lang).pow(2).mean()
 
     if mode == "shared":
         lang_part = (delta @ q_lang) @ q_lang.T
@@ -97,10 +99,26 @@ def projected_mse(delta, mode, q_lang, q_shared_random=None):
     if mode == "shared64":
         if q_shared_random is None:
             raise ValueError("shared64 requires q_shared_random")
-        coords = delta @ q_shared_random
-        return coords.pow(2).mean()
+        return (delta @ q_shared_random).pow(2).mean()
+
+    if mode == "transfer64":
+        if q_transfer is None:
+            raise ValueError(
+                "transfer64 requires --transferable_subspace_file"
+            )
+        return (delta @ q_transfer).pow(2).mean()
 
     raise ValueError(mode)
+
+
+def make_curve_targets(n_batches, fractions):
+    targets = []
+    for frac in sorted(set(fractions)):
+        if frac <= 0 or frac > 1:
+            raise ValueError("--curve_fractions values must be in (0, 1]")
+        batch_target = max(1, int(np.ceil(frac * n_batches)))
+        targets.append((float(frac), batch_target))
+    return targets
 
 
 def train_intervention(
@@ -113,12 +131,15 @@ def train_intervention(
     layer,
     q_lang,
     q_shared_random,
+    q_transfer,
     lr,
     weight_decay,
     micro_batch,
     grad_accum,
     device,
     use_bf16,
+    curve_fractions=None,
+    curve_callback=None,
 ):
     loader = make_loader(blocks, micro_batch)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -128,6 +149,8 @@ def train_intervention(
     total_pres = 0.0
     n_batches = 0
     tokens_seen = 0
+    curve_targets = make_curve_targets(len(loader), curve_fractions or [])
+    next_curve = 0
 
     anchor.eval()
     model.train()
@@ -135,8 +158,6 @@ def train_intervention(
     for i, (x,) in enumerate(loader):
         x = x.to(device, non_blocking=True)
 
-        # The frozen anchor receives exactly the same NEW-language inputs.
-        # This avoids using old-language replay examples in the preservation loss.
         with torch.no_grad():
             with torch.autocast(
                 device_type="cuda",
@@ -163,17 +184,16 @@ def train_intervention(
             )
             lm_loss = out.loss
 
-        h_cur = out.hidden_states[layer].float()
-        delta = h_cur - h_anchor
+        delta = out.hidden_states[layer].float() - h_anchor
         pres_loss = projected_mse(
             delta,
             mode,
             q_lang,
             q_shared_random=q_shared_random,
+            q_transfer=q_transfer,
         )
 
-        loss = (lm_loss + preserve_lambda * pres_loss) / grad_accum
-        loss.backward()
+        ((lm_loss + preserve_lambda * pres_loss) / grad_accum).backward()
 
         total_lm += float(lm_loss.detach())
         total_pres += float(pres_loss.detach())
@@ -185,6 +205,16 @@ def train_intervention(
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             opt.zero_grad(set_to_none=True)
+
+            while (
+                next_curve < len(curve_targets)
+                and (i + 1) >= curve_targets[next_curve][1]
+            ):
+                frac = curve_targets[next_curve][0]
+                if curve_callback is not None:
+                    curve_callback(model, frac, tokens_seen)
+                model.train()
+                next_curve += 1
 
     del opt
     return {
@@ -204,6 +234,8 @@ def train_full_ft(
     grad_accum,
     device,
     use_bf16,
+    curve_fractions=None,
+    curve_callback=None,
 ):
     loader = make_loader(blocks, micro_batch)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -212,6 +244,8 @@ def train_full_ft(
     total_lm = 0.0
     n_batches = 0
     tokens_seen = 0
+    curve_targets = make_curve_targets(len(loader), curve_fractions or [])
+    next_curve = 0
 
     for i, (x,) in enumerate(loader):
         x = x.to(device, non_blocking=True)
@@ -233,6 +267,16 @@ def train_full_ft(
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             opt.zero_grad(set_to_none=True)
+
+            while (
+                next_curve < len(curve_targets)
+                and (i + 1) >= curve_targets[next_curve][1]
+            ):
+                frac = curve_targets[next_curve][0]
+                if curve_callback is not None:
+                    curve_callback(model, frac, tokens_seen)
+                model.train()
+                next_curve += 1
 
     del opt
     return {
@@ -256,7 +300,7 @@ def load_model(checkpoint, device, use_bf16):
 def main():
     ap = argparse.ArgumentParser(
         description=(
-            "Causal intervention: preserve selected Layer-12 components while "
+            "Causal intervention: preserve selected hidden-state components while "
             "learning a second language, then measure retention/plasticity/transfer."
         )
     )
@@ -264,6 +308,11 @@ def main():
     ap.add_argument(
         "--subspace_file",
         default="invariance_analysis/subspace_seed0/reference_inlp_language_subspace.pt",
+    )
+    ap.add_argument(
+        "--transferable_subspace_file",
+        default=None,
+        help="Optional .pt file containing transferable_subspace_basis.",
     )
     ap.add_argument("--data_dir", default="invariance_data/wiki")
     ap.add_argument("--old_language", default="en")
@@ -273,7 +322,9 @@ def main():
         "--methods",
         nargs="+",
         default=["full_ft", "full", "shared", "lang", "shared64"],
-        choices=["full_ft", "full", "shared", "lang", "shared64"],
+        choices=[
+            "full_ft", "full", "shared", "lang", "shared64", "transfer64"
+        ],
     )
     ap.add_argument("--lambdas", nargs="+", type=float, default=[1.0])
     ap.add_argument("--layer", type=int, default=12)
@@ -285,8 +336,8 @@ def main():
         type=int,
         default=None,
         help=(
-            "Shuffle seed for the new-language blocks. For the existing EN->ZH "
-            "seed-0 pilot use 1001 to exactly match train_sequence.py."
+            "Shuffle seed for the new-language blocks. For EN->ZH seed 0 use "
+            "1001; for ZH->EN seed 0 use 1000 to match train_sequence.py."
         ),
     )
     ap.add_argument("--lr", type=float, default=2e-5)
@@ -294,6 +345,13 @@ def main():
     ap.add_argument("--micro_batch", type=int, default=4)
     ap.add_argument("--grad_accum", type=int, default=4)
     ap.add_argument("--eval_batch", type=int, default=8)
+    ap.add_argument(
+        "--curve_fractions",
+        type=float,
+        nargs="*",
+        default=[],
+        help="Optional learning-curve fractions, e.g. 0.1 0.25 0.5 0.75 1.0.",
+    )
     ap.add_argument(
         "--max_train_blocks",
         type=int,
@@ -316,13 +374,24 @@ def main():
     q_lang = sub["language_subspace_basis"].float().to(device)
     if int(sub["layer"]) != args.layer:
         raise ValueError(
-            f"Subspace was fit at layer {sub['layer']}, requested layer {args.layer}"
+            f"Language subspace is layer {sub['layer']}, requested {args.layer}"
         )
+
     q_shared_random = make_shared_random_basis(
         q_lang, args.shared64_rank, args.seed + 777
     )
 
-    # Use the same shuffled new-language data for every intervention.
+    q_transfer = None
+    if "transfer64" in args.methods:
+        if args.transferable_subspace_file is None:
+            raise ValueError(
+                "transfer64 requested but --transferable_subspace_file is missing"
+            )
+        transfer = torch.load(args.transferable_subspace_file, map_location="cpu")
+        if int(transfer["layer"]) != args.layer:
+            raise ValueError("Transferable subspace layer does not match")
+        q_transfer = transfer["transferable_subspace_basis"].float().to(device)
+
     train_blocks = load_blocks(
         Path(args.data_dir) / f"{args.new_language}_train.pt"
     )
@@ -347,7 +416,6 @@ def main():
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
 
-    # One frozen anchor is reused across all preservation interventions.
     print("Loading frozen anchor model...")
     anchor = load_model(args.anchor_checkpoint, device, use_bf16)
     anchor.eval()
@@ -362,6 +430,7 @@ def main():
         print(f"[anchor] eval={lang} loss={anchor_losses[lang]:.4f}")
 
     rows = []
+    curve_rows = []
 
     configs = []
     for method in args.methods:
@@ -371,11 +440,52 @@ def main():
             for lam in args.lambdas:
                 configs.append((method, lam))
 
-    for config_idx, (method, lam) in enumerate(configs):
+    for method, lam in configs:
         set_seed(args.seed)
         print(f"\n=== method={method} lambda={lam:g} ===")
-
         model = load_model(args.anchor_checkpoint, device, use_bf16)
+
+        if args.curve_fractions:
+            curve_rows.append({
+                "method": method,
+                "lambda": lam,
+                "seed": args.seed,
+                "fraction": 0.0,
+                "tokens_seen": 0,
+                **{
+                    f"{lang}_loss": anchor_losses[lang]
+                    for lang in args.eval_languages
+                },
+                "forgetting_loss_delta": 0.0,
+                "new_language_gain": 0.0,
+            })
+
+        def curve_callback(cur_model, fraction, tokens_seen):
+            losses = {
+                lang: evaluate(
+                    cur_model, val[lang], args.eval_batch, device, use_bf16
+                )
+                for lang in args.eval_languages
+            }
+            curve_rows.append({
+                "method": method,
+                "lambda": lam,
+                "seed": args.seed,
+                "fraction": fraction,
+                "tokens_seen": tokens_seen,
+                **{f"{lang}_loss": losses[lang] for lang in args.eval_languages},
+                "forgetting_loss_delta": (
+                    losses[args.old_language] - anchor_losses[args.old_language]
+                ),
+                "new_language_gain": (
+                    anchor_losses[args.new_language] - losses[args.new_language]
+                ),
+            })
+            print(
+                f"[curve {method} lam={lam:g} frac={fraction:.2f}] "
+                f"forget={losses[args.old_language]-anchor_losses[args.old_language]:+.5f} "
+                f"new_gain={anchor_losses[args.new_language]-losses[args.new_language]:+.5f}"
+            )
 
         if method == "full_ft":
             train_stats = train_full_ft(
@@ -387,6 +497,8 @@ def main():
                 grad_accum=args.grad_accum,
                 device=device,
                 use_bf16=use_bf16,
+                curve_fractions=args.curve_fractions,
+                curve_callback=curve_callback,
             )
         else:
             train_stats = train_intervention(
@@ -398,27 +510,26 @@ def main():
                 layer=args.layer,
                 q_lang=q_lang,
                 q_shared_random=q_shared_random,
+                q_transfer=q_transfer,
                 lr=args.lr,
                 weight_decay=args.weight_decay,
                 micro_batch=args.micro_batch,
                 grad_accum=args.grad_accum,
                 device=device,
                 use_bf16=use_bf16,
+                curve_fractions=args.curve_fractions,
+                curve_callback=curve_callback,
             )
 
         eval_losses = {}
         for lang in args.eval_languages:
-            loss = evaluate(
-                model, val[lang], args.eval_batch, device, use_bf16
-            )
+            loss = evaluate(model, val[lang], args.eval_batch, device, use_bf16)
             eval_losses[lang] = loss
             print(
                 f"[{method} lambda={lam:g}] eval={lang} "
                 f"loss={loss:.4f} delta_from_anchor={loss-anchor_losses[lang]:+.4f}"
             )
 
-        old_loss = eval_losses[args.old_language]
-        new_loss = eval_losses[args.new_language]
         row = {
             "method": method,
             "lambda": lam,
@@ -430,16 +541,22 @@ def main():
             "mean_train_lm_loss": train_stats["mean_train_lm_loss"],
             "mean_preserve_loss": train_stats["mean_preserve_loss"],
             "old_anchor_loss": anchor_losses[args.old_language],
-            "old_final_loss": old_loss,
-            "forgetting_loss_delta": old_loss - anchor_losses[args.old_language],
+            "old_final_loss": eval_losses[args.old_language],
+            "forgetting_loss_delta": (
+                eval_losses[args.old_language] - anchor_losses[args.old_language]
+            ),
             "new_anchor_loss": anchor_losses[args.new_language],
-            "new_final_loss": new_loss,
-            "new_language_gain": anchor_losses[args.new_language] - new_loss,
+            "new_final_loss": eval_losses[args.new_language],
+            "new_language_gain": (
+                anchor_losses[args.new_language] - eval_losses[args.new_language]
+            ),
         }
         for lang in args.eval_languages:
             row[f"{lang}_anchor_loss"] = anchor_losses[lang]
             row[f"{lang}_final_loss"] = eval_losses[lang]
-            row[f"{lang}_loss_delta"] = eval_losses[lang] - anchor_losses[lang]
+            row[f"{lang}_loss_delta"] = (
+                eval_losses[lang] - anchor_losses[lang]
+            )
         rows.append(row)
 
         if args.save_checkpoints:
@@ -457,7 +574,15 @@ def main():
         w.writeheader()
         w.writerows(rows)
 
-    # Retention-plasticity ranking. Lower forgetting is better; higher new gain is better.
+    if curve_rows:
+        curve_fields = sorted({k for r in curve_rows for k in r.keys()})
+        with (out_dir / "learning_curves.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as f:
+            w = csv.DictWriter(f, fieldnames=curve_fields)
+            w.writeheader()
+            w.writerows(curve_rows)
+
     ranked = sorted(
         rows,
         key=lambda r: (r["forgetting_loss_delta"], -r["new_language_gain"]),
@@ -475,11 +600,13 @@ def main():
     manifest = {
         "anchor_checkpoint": args.anchor_checkpoint,
         "subspace_file": args.subspace_file,
+        "transferable_subspace_file": args.transferable_subspace_file,
         "old_language": args.old_language,
         "new_language": args.new_language,
         "eval_languages": args.eval_languages,
         "methods": args.methods,
         "lambdas": args.lambdas,
+        "curve_fractions": args.curve_fractions,
         "layer": args.layer,
         "shared64_rank": args.shared64_rank,
         "seed": args.seed,
@@ -494,6 +621,8 @@ def main():
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
     print(f"\nSaved: {out_dir / 'intervention_metrics.csv'}")
+    if curve_rows:
+        print(f"Saved: {out_dir / 'learning_curves.csv'}")
 
 
 if __name__ == "__main__":
