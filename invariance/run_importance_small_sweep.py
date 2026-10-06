@@ -83,8 +83,8 @@ def main():
     ap = argparse.ArgumentParser(
         description=(
             "Cheap one-direction exploratory sweep for Importance + Align. "
-            "Runs a clean Full-FT baseline, a preservation-only lambda sweep, "
-            "then a small alignment sweep at one chosen preservation lambda."
+            "Runs a clean Full-FT baseline plus a one-direction preservation-only "
+            "lambda sweep. Alignment experiments are optional via --with_align_sweep."
         )
     )
     ap.add_argument("--direction", default="zh:en", help="OLD:NEW")
@@ -120,7 +120,14 @@ def main():
         "--out_root",
         default="invariance_runs/small_importance_sweep",
     )
-    ap.add_argument("--skip_align_sweep", action="store_true")
+    ap.add_argument(
+        "--with_align_sweep",
+        action="store_true",
+        help=(
+            "Also run the second-stage alignment sweep. By default the cheap "
+            "exploratory run only does Full FT + preservation-only lambda sweep."
+        ),
+    )
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
@@ -202,8 +209,10 @@ def main():
         maybe_run(metrics, cmd, force=args.force)
         metric_files.append(metrics)
 
-    # 2) Alignment sweep at one fixed preservation lambda.
-    if not args.skip_align_sweep:
+    # 2) Optional alignment sweep at one fixed preservation lambda.
+    # Keep this off during the first cheap pass; enable only after a useful
+    # preservation-only trade-off appears.
+    if args.with_align_sweep:
         for lam_a in args.align_lambdas:
             out_dir = root / (
                 f"combined_p{tag(args.alignment_preserve_lambda)}_a{tag(lam_a)}"
