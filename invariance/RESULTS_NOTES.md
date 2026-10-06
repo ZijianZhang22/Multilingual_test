@@ -54,3 +54,40 @@ All methods at the same layer now use the same initialization seed. The benchmar
    - sweep DANN adversarial strength;
    - add RAW/PCA/random-projection controls;
    - then move to continual-language checkpoints and test which representation change best predicts forgetting.
+
+
+## 2026-10-05: Paired-seed rerun confirms the main pattern
+
+After fixing method-specific seed offsets, the layer-12 benchmark was rerun with paired initialization.
+
+| Method | All-language XNLI acc | Language-ID acc | LOO EN | LOO FR | LOO ZH | Mean LOO |
+|---|---:|---:|---:|---:|---:|---:|
+| ERM | 0.5617 | 0.6653 | 0.5133 | 0.4683 | 0.4883 | 0.4900 |
+| IRM | 0.5675 | 0.8950 | 0.4817 | 0.5042 | 0.3942 | 0.4600 |
+| V-REx | 0.5669 | 0.6078 | 0.5275 | 0.4717 | 0.4808 | 0.4933 |
+| DANN | 0.5800 | 0.9983 | 0.5358 | 0.5350 | 0.5342 | 0.5350 |
+| INLP | 0.5511 | 0.9692 | 0.5242 | 0.5183 | 0.5525 | 0.5317 |
+
+### Updated interpretation
+
+The earlier qualitative pattern survives the paired-seed rerun:
+
+- DANN and INLP still give the strongest held-out-language transfer.
+- IRM does not improve held-out transfer overall and substantially hurts held-out ZH in this run.
+- V-REx is close to ERM.
+- Crucially, the methods with the best LOO transfer (DANN / INLP) still retain extremely high linearly decodable language identity.
+
+This strengthens the hypothesis that:
+**cross-lingual transferability is not equivalent to low language decodability.**
+
+A plausible representation picture is not "language-neutral only", but coexistence of:
+- transferable/shared task structure, and
+- language-specific structure.
+
+### Next checks before continual-forgetting experiments
+
+1. Repeat paired benchmark for seeds 0/1/2.
+2. Sweep INLP removal strength (8/16/32/64 iterations).
+3. Improve/sweep DANN adversarial training because the current DANN representation remains ~99.8% linearly language-decodable.
+4. Add RAW/PCA/random-projection controls.
+5. Only after the above are stable, use the best/most-informative representation metrics to predict forgetting across sequential language adaptation.
