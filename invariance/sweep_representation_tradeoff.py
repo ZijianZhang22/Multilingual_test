@@ -148,7 +148,7 @@ def make_method_args(args, *, inlp_iters=None, dann_lambda=None):
         weight_decay=args.weight_decay,
         irm_lambda=args.irm_lambda,
         vrex_lambda=args.vrex_lambda,
-        dann_lambda=args.dann_lambda if dann_lambda is None else dann_lambda,
+        dann_lambda=1.0 if dann_lambda is None else dann_lambda,
         lang_probe_epochs=args.lang_probe_epochs,
         lang_probe_lr=args.lang_probe_lr,
         inlp_iters=args.inlp_iters[0] if inlp_iters is None else inlp_iters,
