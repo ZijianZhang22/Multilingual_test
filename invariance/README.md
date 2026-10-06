@@ -428,3 +428,143 @@ Interpretation should focus on:
 5. manipulation validity: whether the intended subspace drift was actually reduced.
 
 Do not claim that the transferable subspace is uniquely causal unless it beats matched-rank random and language-specific controls at comparable plasticity.
+
+
+## 10. Stronger follow-up methods after the Seed-0 stability/plasticity result
+
+Seed 0 showed that uniform activation preservation can reduce forgetting, but the original
+`transfer64` constraint was much stronger in effective scale and reduced new-language
+plasticity. The next experiments therefore test methods that explicitly distinguish
+old-language stability from new-language plasticity.
+
+### Method A: importance-weighted preservation + cross-lingual alignment
+
+File:
+
+```text
+invariance/train_importance_preserve_align.py
+```
+
+The method estimates Fisher-like importance of each Layer-12 hidden coordinate on old- and
+new-language LM data. It derives a stability weight from old-vs-new importance, preserves
+important anchor coordinates on the new-language stream, and simultaneously aligns
+semantically matched new-language representations to old-language representations using
+aligned XNLI pairs.
+
+Objective:
+
+```text
+L = L_new_LM
+  + lambda_preserve * weighted_hidden_preservation
+  + lambda_align * cross_lingual_alignment
+```
+
+Example:
+
+```bash
+python invariance/train_importance_preserve_align.py \
+  --anchor_checkpoint invariance_runs/sequence_seed0/en__zh/stage1_en \
+  --old_language en --new_language zh \
+  --aligned_data_file invariance_analysis/causal_representation_suite/xnli_aligned.jsonl \
+  --transferable_subspace_file invariance_analysis/causal_representation_suite/transferable_rank64.pt \
+  --lambda_preserve 1 \
+  --lambda_align 1 \
+  --data_shuffle_seed 1001 \
+  --out_dir invariance_runs/advanced_methods/seed0/en_to_zh/importance_align
+```
+
+### Method B: gradient-aware selective protection
+
+File:
+
+```text
+invariance/train_gradient_selective_protection.py
+```
+
+This method changes the gradient flowing through the selected hidden layer rather than adding
+an activation L2 loss.
+
+Two modes are implemented:
+
+```text
+coordinate:
+    estimate old/new hidden-coordinate importance and suppress gradients
+    most strongly on stability-critical coordinates
+
+subspace:
+    fit the top old-language hidden-gradient covariance directions and
+    project new-language hidden gradients away from those directions
+```
+
+The intervention acts on gradient flow upstream of the selected representation layer. It is
+therefore intentionally different from parameter-space GEM/A-GEM and should be interpreted as
+a representation-level surgery method.
+
+Example:
+
+```bash
+python invariance/train_gradient_selective_protection.py \
+  --anchor_checkpoint invariance_runs/sequence_seed0/en__zh/stage1_en \
+  --old_language en --new_language zh \
+  --surgery_mode coordinate \
+  --strength 0.75 \
+  --data_shuffle_seed 1001 \
+  --out_dir invariance_runs/advanced_methods/seed0/en_to_zh/gradient_coordinate
+```
+
+### Method C: SAE feature-level multilingual preservation
+
+File:
+
+```text
+invariance/train_sae_feature_preservation.py
+```
+
+A sparse autoencoder is trained on Layer-12 anchor activations from both old and new languages.
+The script then estimates feature-level Fisher-like importance using activation x feature-gradient
+scores, selects features that are more important for retaining the old language, and preserves
+only those sparse feature activations while training the new language.
+
+Example:
+
+```bash
+python invariance/train_sae_feature_preservation.py \
+  --anchor_checkpoint invariance_runs/sequence_seed0/en__zh/stage1_en \
+  --old_language en --new_language zh \
+  --lambda_preserve 1 \
+  --dict_size 2048 \
+  --top_k_features 256 \
+  --data_shuffle_seed 1001 \
+  --out_dir invariance_runs/advanced_methods/seed0/en_to_zh/sae_feature
+```
+
+### One-click runner
+
+Quick smoke test first:
+
+```bash
+python invariance/run_advanced_preservation_suite.py --quick
+```
+
+This runs seed 0, EN->ZH only, 200 training blocks, fewer importance batches, and a shorter SAE
+fit so that code/data issues can be detected cheaply.
+
+Full seed-0 two-direction test:
+
+```bash
+python invariance/run_advanced_preservation_suite.py \
+  --seeds 0 \
+  --directions en:zh zh:en
+```
+
+Outputs are merged into:
+
+```text
+invariance_runs/advanced_methods/advanced_methods_summary.csv
+```
+
+The first success criterion is not simply minimum forgetting. Compare each method against Full FT
+and the previous shared/full preservation baselines on the retention-plasticity plane. A genuinely
+stronger method should lower forgetting while keeping new-language gain close to, or ideally above,
+Full FT. If Method A improves new-language learning speed as well as retention, it is the strongest
+candidate for the next paper iteration.
