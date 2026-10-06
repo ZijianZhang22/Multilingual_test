@@ -131,3 +131,29 @@ Layer-12 representations appear to contain partly separable components:
 The INLP sweep suggests a useful mechanistic decomposition: approximately 32 rounds of language-direction removal preserve nearly all held-out-language transfer while substantially reducing language identity, whereas stronger removal starts damaging transferable/task information.
 
 This motivates using the INLP removed basis and its residual complement as candidate language-specific vs transferable/shared subspaces in continual-language adaptation. Track each subspace separately across checkpoints and test which drift predicts forgetting.
+
+
+## 2026-10-06: Corrected anchor-relative subspace tracking pilot
+
+The seed bug in checkpoint-specific INLP refits was fixed, so identical stage-0 checkpoints now have language-subspace overlap 1.0 in both sequence branches.
+
+Behavioral forgetting:
+- EN→ZH: EN loss 2.5191 after EN training, then 2.5347 after ZH; forgetting = +0.015650.
+- ZH→EN: ZH loss 2.6467 after ZH training, then 2.6649 after EN; forgetting = +0.018215.
+
+Anchor-relative Layer-12 drift for the forgotten language:
+- EN forgotten by ZH: language drift L2 = 0.323947; shared-complement drift L2 = 1.207635; anchor language-subspace overlap = 0.393069.
+- ZH forgotten by EN: language drift L2 = 0.242556; shared-complement drift L2 = 1.467532; anchor language-subspace overlap = 0.410887.
+
+The higher-forgetting case has larger shared-complement drift despite smaller language-subspace drift. This is only a two-point directional observation, not statistical evidence.
+
+Dimension-normalized squared drift is also informative because the candidate language subspace is 64-D and its complement is 832-D:
+- EN forgotten by ZH: language ≈ 0.001640 per dim; shared ≈ 0.001753 per dim (ratio ≈ 0.94).
+- ZH forgotten by EN: language ≈ 0.000919 per dim; shared ≈ 0.002589 per dim (ratio ≈ 0.36).
+
+Thus the second forgetting event shows substantially more shared-complement perturbation per dimension.
+
+Important interpretation:
+- The global "all rows" correlations are not evidence about forgetting because they mix trained-language improvement, zero-shot languages, and old-language forgetting.
+- Only old-language rows answer the forgetting question, and n=2 is far too small for correlation analysis.
+- This pilot is therefore used only to motivate a causal intervention experiment: preserve different Layer-12 components during the second-language stage and compare forgetting directly.
