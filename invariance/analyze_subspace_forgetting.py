@@ -109,17 +109,17 @@ def main():
     old.to_csv(out / "old_language_forgetting.csv", index=False)
 
     metrics = [
-        "mean_total_drift_l2",
-        "mean_lang_drift_l2",
-        "mean_shared_drift_l2",
-        "lang_drift_fraction",
-        "shared_drift_fraction",
-        "lang_drift_per_dim",
-        "shared_drift_per_dim",
-        "lang_vs_shared_drift_per_dim_ratio",
-        "lang_subspace_overlap",
-        "mean_principal_angle_deg",
-        "max_principal_angle_deg",
+        "anchor_mean_total_drift_l2",
+        "anchor_mean_lang_drift_l2",
+        "anchor_mean_shared_drift_l2",
+        "anchor_lang_drift_fraction",
+        "anchor_shared_drift_fraction",
+        "anchor_lang_drift_per_dim",
+        "anchor_shared_drift_per_dim",
+        "anchor_lang_vs_shared_drift_per_dim_ratio",
+        "anchor_lang_subspace_overlap",
+        "anchor_mean_principal_angle_deg",
+        "anchor_max_principal_angle_deg",
         "lang_representation_energy_fraction",
     ]
 
@@ -148,8 +148,8 @@ def main():
     else:
         cols = [
             "sequence", "stage", "trained_language", "eval_language",
-            "forgetting_loss_delta", "mean_lang_drift_l2",
-            "mean_shared_drift_l2", "lang_subspace_overlap",
+            "forgetting_loss_delta", "anchor_mean_lang_drift_l2",
+            "anchor_mean_shared_drift_l2", "anchor_lang_subspace_overlap",
         ]
         print(old[cols].to_string(index=False))
 
