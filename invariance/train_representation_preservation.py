@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+
+from extract_hidden import JsonlDataset, collate, mean_pool
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -56,6 +58,78 @@ def save_checkpoint(model, tokenizer, path):
     path.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(path)
     tokenizer.save_pretrained(path)
+
+
+@torch.no_grad()
+def extract_loaded_model_features(
+    model,
+    tokenizer,
+    *,
+    data_file,
+    out_file,
+    layer,
+    batch_size,
+    max_length,
+    device,
+    use_bf16,
+):
+    ds = JsonlDataset(data_file)
+    loader = DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate,
+    )
+
+    feats = []
+    labels, languages, splits, ids = [], [], [], []
+    model.eval()
+
+    for rows in loader:
+        texts = [r["premise"] + "\n\n" + r["hypothesis"] for r in rows]
+        enc = tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+            return_tensors="pt",
+        )
+        enc = {k: v.to(device) for k, v in enc.items()}
+
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=(device.type == "cuda" and use_bf16),
+        ):
+            out = model(
+                **enc,
+                output_hidden_states=True,
+                use_cache=False,
+            )
+
+        h = out.hidden_states[layer]
+        pooled = mean_pool(h, enc["attention_mask"])
+        feats.append(pooled.float().cpu())
+        labels.extend(int(r["label"]) for r in rows)
+        languages.extend(r["language"] for r in rows)
+        splits.extend(r["split"] for r in rows)
+        ids.extend(r["example_id"] for r in rows)
+
+    payload = {
+        "checkpoint": f"in_memory:{out_file}",
+        "pool": "mean",
+        "layers": [layer],
+        "features": {str(layer): torch.cat(feats, dim=0)},
+        "labels": torch.tensor(labels, dtype=torch.long),
+        "languages": languages,
+        "splits": splits,
+        "example_ids": ids,
+    }
+    out_path = Path(out_file)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, out_path)
+    model.train()
+    print(f"Saved in-memory hidden features to {out_path}")
 
 
 def make_shared_random_basis(q_lang, rank, seed):
@@ -373,6 +447,35 @@ def main():
         default=None,
         help="If set, only save checkpoints whose lambda matches one of these values.",
     )
+    ap.add_argument(
+        "--feature_extract_data",
+        default=None,
+        help=(
+            "Optional XNLI-style JSONL. If set, selected intervention models are "
+            "converted directly to hidden-state .pt files while still in memory, "
+            "so full model checkpoints do not need to be saved."
+        ),
+    )
+    ap.add_argument(
+        "--feature_extract_dir",
+        default=None,
+        help="Output directory for in-memory intervention feature files.",
+    )
+    ap.add_argument(
+        "--feature_extract_methods",
+        nargs="*",
+        default=None,
+        help="Only extract features for these methods; default all methods.",
+    )
+    ap.add_argument(
+        "--feature_extract_lambdas",
+        nargs="*",
+        type=float,
+        default=None,
+        help="Only extract features for these lambdas (full_ft is always eligible).",
+    )
+    ap.add_argument("--feature_extract_batch", type=int, default=16)
+    ap.add_argument("--feature_extract_max_length", type=int, default=256)
     args = ap.parse_args()
 
     if not torch.cuda.is_available():
@@ -572,6 +675,35 @@ def main():
             )
         rows.append(row)
 
+        should_extract = (
+            args.feature_extract_data is not None
+            and args.feature_extract_dir is not None
+        )
+        if should_extract and args.feature_extract_methods is not None:
+            should_extract = method in args.feature_extract_methods
+        if (
+            should_extract
+            and method != "full_ft"
+            and args.feature_extract_lambdas is not None
+        ):
+            should_extract = any(
+                abs(lam - x) < 1e-12 for x in args.feature_extract_lambdas
+            )
+
+        if should_extract:
+            name = method if method == "full_ft" else f"{method}_lam{lam:g}"
+            extract_loaded_model_features(
+                model,
+                tok,
+                data_file=args.feature_extract_data,
+                out_file=Path(args.feature_extract_dir) / f"{name}.pt",
+                layer=args.layer,
+                batch_size=args.feature_extract_batch,
+                max_length=args.feature_extract_max_length,
+                device=device,
+                use_bf16=use_bf16,
+            )
+
         should_save = args.save_checkpoints
         if should_save and args.save_methods is not None:
             should_save = method in args.save_methods
@@ -641,6 +773,10 @@ def main():
         "max_train_blocks": args.max_train_blocks,
         "save_methods": args.save_methods,
         "save_lambdas": args.save_lambdas,
+        "feature_extract_data": args.feature_extract_data,
+        "feature_extract_dir": args.feature_extract_dir,
+        "feature_extract_methods": args.feature_extract_methods,
+        "feature_extract_lambdas": args.feature_extract_lambdas,
     }
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
