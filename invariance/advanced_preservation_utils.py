@@ -381,6 +381,11 @@ def train_sparse_autoencoder(
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
+            # Prevent the SAE from trivially shrinking L1 activity by
+            # increasing decoder column norms.
+            with torch.no_grad():
+                w = sae.decoder.weight
+                w.div_(w.norm(dim=0, keepdim=True).clamp_min(1e-8))
             total_rec += float(rec.detach())
             total_l1 += float(l1.detach())
             n += 1
@@ -422,6 +427,7 @@ def estimate_sae_feature_importance(
     max_batches,
     device,
     use_bf16,
+    center=None,
 ):
     """Feature-level Fisher-like importance using activation times feature gradient."""
     model = load_model(checkpoint, device, use_bf16, trainable=True)
@@ -454,6 +460,8 @@ def estimate_sae_feature_importance(
         grad_h = torch.autograd.grad(out.loss, h, retain_graph=False)[0].float()
         flat_h = h.detach().float().reshape(-1, h.shape[-1])
         flat_g = grad_h.reshape(-1, grad_h.shape[-1])
+        if center is not None:
+            flat_h = flat_h - center.to(flat_h.device).view(1, -1)
 
         with torch.no_grad():
             z = sae.encode(flat_h)
