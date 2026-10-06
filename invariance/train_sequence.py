@@ -117,6 +117,12 @@ def main():
     ap.add_argument("--micro_batch", type=int, default=4)
     ap.add_argument("--grad_accum", type=int, default=4)
     ap.add_argument("--eval_batch", type=int, default=8)
+    ap.add_argument(
+        "--eval_languages",
+        nargs="+",
+        default=None,
+        help="Languages to evaluate after every stage. Defaults to languages in the training sequences.",
+    )
     ap.add_argument("--no_bf16", action="store_true")
     ap.add_argument("--gradient_checkpointing", action="store_true")
     args = ap.parse_args()
@@ -131,12 +137,19 @@ def main():
     out_root.mkdir(parents=True, exist_ok=True)
 
     sequences = [tuple(x.split(",")) for x in args.sequences]
-    languages = sorted({lang for seq in sequences for lang in seq})
-    train = {lang: load_blocks(data_dir / f"{lang}_train.pt") for lang in languages}
-    val = {lang: load_blocks(data_dir / f"{lang}_val.pt") for lang in languages}
+    train_languages = sorted({lang for seq in sequences for lang in seq})
+    eval_languages = args.eval_languages or train_languages
+    train = {
+        lang: load_blocks(data_dir / f"{lang}_train.pt")
+        for lang in train_languages
+    }
+    val = {
+        lang: load_blocks(data_dir / f"{lang}_val.pt")
+        for lang in eval_languages
+    }
 
     shuffled = {}
-    for idx, lang in enumerate(languages):
+    for idx, lang in enumerate(train_languages):
         g = torch.Generator().manual_seed(args.seed + 1000 + idx)
         shuffled[lang] = train[lang][torch.randperm(len(train[lang]), generator=g)]
 
@@ -151,6 +164,7 @@ def main():
         "lr": args.lr,
         "schedule": "constant_lr_optimizer_reset_each_language",
         "sequences": [list(s) for s in sequences],
+        "eval_languages": list(eval_languages),
     }
 
     for sequence in sequences:
@@ -170,6 +184,23 @@ def main():
 
         save_checkpoint(model, tok, branch_dir / "stage0_base")
 
+        # Stage-0 evaluation is required to distinguish true forgetting from
+        # simple differences in the pretrained starting point.
+        for eval_lang in eval_languages:
+            loss = evaluate(model, val[eval_lang], args.eval_batch, device, use_bf16)
+            rows.append({
+                "sequence": name,
+                "stage": 0,
+                "trained_language": "base",
+                "eval_language": eval_lang,
+                "tokens_seen_in_stage": 0,
+                "val_loss": loss,
+            })
+            print(
+                f"[{name}] stage=0 trained=base "
+                f"eval={eval_lang} loss={loss:.4f}"
+            )
+
         for stage_idx, lang in enumerate(sequence, start=1):
             tokens_seen = train_one_language(
                 model,
@@ -185,7 +216,7 @@ def main():
             ckpt = branch_dir / f"stage{stage_idx}_{lang}"
             save_checkpoint(model, tok, ckpt)
 
-            for eval_lang in languages:
+            for eval_lang in eval_languages:
                 loss = evaluate(model, val[eval_lang], args.eval_batch, device, use_bf16)
                 rows.append({
                     "sequence": name,
