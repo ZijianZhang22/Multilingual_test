@@ -294,6 +294,12 @@ def main():
     ap.add_argument("--micro_batch", type=int, default=4)
     ap.add_argument("--grad_accum", type=int, default=4)
     ap.add_argument("--eval_batch", type=int, default=8)
+    ap.add_argument(
+        "--max_train_blocks",
+        type=int,
+        default=None,
+        help="Optional smoke-test limit after shuffling; omit for the full stage.",
+    )
     ap.add_argument("--no_bf16", action="store_true")
     ap.add_argument("--save_checkpoints", action="store_true")
     args = ap.parse_args()
@@ -329,6 +335,8 @@ def main():
     train_blocks = train_blocks[
         torch.randperm(len(train_blocks), generator=g)
     ]
+    if args.max_train_blocks is not None:
+        train_blocks = train_blocks[: args.max_train_blocks]
 
     val = {
         lang: load_blocks(Path(args.data_dir) / f"{lang}_val.pt")
@@ -480,6 +488,7 @@ def main():
             "new-language training blocks only; no old-language replay examples"
         ),
         "loss_normalization": "per represented dimension",
+        "max_train_blocks": args.max_train_blocks,
     }
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
