@@ -157,3 +157,40 @@ Important interpretation:
 - The global "all rows" correlations are not evidence about forgetting because they mix trained-language improvement, zero-shot languages, and old-language forgetting.
 - Only old-language rows answer the forgetting question, and n=2 is far too small for correlation analysis.
 - This pilot is therefore used only to motivate a causal intervention experiment: preserve different Layer-12 components during the second-language stage and compare forgetting directly.
+
+
+## 2026-10-06: First causal representation-preservation intervention (EN -> ZH)
+
+Anchor: stage1_en. Second-stage training: ZH. Layer 12. Preservation evaluated on the same new-language (ZH) inputs, with no EN replay examples.
+
+Baseline full fine-tuning:
+- EN forgetting: +0.01561 loss
+- ZH gain: +0.14300
+- FR delta: +0.0056 loss
+
+Selected intervention results:
+- language-subspace, lambda=10: forgetting +0.01389; ZH gain +0.14037
+- matched-rank shared64, lambda=10: forgetting +0.01295; ZH gain +0.13662
+- full shared-complement, lambda=10: forgetting +0.01224; ZH gain +0.13598
+- full Layer-12 preservation, lambda=10: forgetting +0.01230; ZH gain +0.13563
+- full Layer-12 preservation, lambda=1: forgetting +0.01440; ZH gain +0.14269
+- shared-complement, lambda=1: forgetting +0.01464; ZH gain +0.14275
+
+Relative to full FT, lambda=10 reduces forgetting by about:
+- language subspace: 11%
+- shared64: 17%
+- shared complement: 22%
+- full Layer 12: 21%
+
+But the stronger preservation also reduces new-language gain. At lambda=10 the new-language gain drops by about 1.8% (language), 4.5% (shared64), 4.9% (shared), and 5.2% (full).
+
+### Interpretation
+
+This is a positive causal pilot: activation preservation can reduce old-language forgetting even though the preservation loss uses only new-language examples.
+
+However, there is NOT yet evidence that the INLP shared complement is uniquely responsible:
+- preserving the 832-D shared complement and preserving the full 896-D Layer-12 representation behave almost identically;
+- matched-rank shared64 improves retention more than the 64-D language subspace at lambda=10, but pays a larger plasticity cost;
+- therefore much of the effect may be generic activation regularization rather than a special property of the discovered shared subspace.
+
+The main next question is the retention-plasticity Pareto frontier, not raw forgetting alone. We need multiple seeds and denser lambda sweeps, and ideally a learned/matched-rank transferable 64-D subspace rather than using the entire 832-D residual complement.
