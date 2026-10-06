@@ -341,3 +341,90 @@ INLP  : explicitly erase linearly decodable language directions
 ```
 
 Therefore, agreement among several methods around the same layer/subspace is stronger evidence than relying on the IRM score alone.
+
+
+## 9. Causal representation-preservation experiment suite
+
+The current main experiment asks a causal question:
+
+> Which multilingual representation components should be preserved during new-language learning to reduce forgetting without sacrificing plasticity?
+
+The suite contains:
+
+- `fit_inlp_language_subspace.py`: fits the INLP-32 candidate language-specific subspace.
+- `prepare_aligned_xnli.py`: builds semantically aligned EN/ZH/FR XNLI examples.
+- `fit_transferable_subspace.py`: constructs a matched-rank transferable candidate subspace from aligned semantic means after removing the INLP language subspace.
+- `train_representation_preservation.py`: compares Full FT, full Layer-12 preservation, INLP language-subspace preservation, random 64-D residual preservation, transferable 64-D preservation, and full residual/shared preservation.
+- `analyze_pareto.py`: aggregates retention-vs-plasticity Pareto results across seeds/directions.
+- `analyze_intervention_drift.py`: manipulation check: verifies which representation components were actually stabilized.
+- `run_full_causal_representation_suite.py`: one-click runner for the full experiment.
+
+### Recommended first run: quick end-to-end validation
+
+```bash
+python invariance/run_full_causal_representation_suite.py --quick
+```
+
+Quick mode runs seed 0, both EN→ZH and ZH→EN, lambdas 1 and 10, short learning-curve checkpoints, transferable-subspace construction, manipulation checks, and Pareto aggregation.
+
+### Full experiment
+
+```bash
+python invariance/run_full_causal_representation_suite.py \
+  --seeds 0 1 2 \
+  --directions en:zh zh:en \
+  --lambdas 0.3 1 3 5 10 20 \
+  --curve_lambda 3 \
+  --curve_fractions 0.1 0.25 0.5 0.75 1.0
+```
+
+This is compute-heavy because every intervention is a full second-language training stage.
+
+### Core causal comparisons
+
+At the same layer and training data:
+
+```text
+full_ft      ordinary fine-tuning
+lang         preserve the INLP language-specific subspace
+shared64     preserve a matched-rank random 64-D residual subspace
+transfer64   preserve a matched-rank transferable 64-D semantic subspace
+shared       preserve the full INLP residual complement
+full         preserve all Layer-12 activations
+```
+
+The most informative comparison is:
+
+```text
+lang (64-D) vs transfer64 (64-D) vs shared64 random (64-D)
+```
+
+because it controls subspace rank.
+
+### Main outputs
+
+```text
+invariance_runs/causal_representation_suite/
+  seed*/
+    en_to_zh/
+      sweep/intervention_metrics.csv
+      curves_lam3/learning_curves.csv
+    zh_to_en/
+      ...
+
+invariance_analysis/causal_representation_suite/
+  reference_inlp_language_subspace.pt
+  transferable_rank64.pt
+  seed*/.../manipulation/intervention_drift.csv
+  pareto_all/aggregate_pareto.csv
+  pareto_all/pareto_front.csv
+```
+
+Interpretation should focus on:
+1. retention: lower old-language loss increase;
+2. plasticity: higher new-language loss reduction;
+3. transfer: third-language loss change;
+4. sample efficiency: learning curves versus tokens seen;
+5. manipulation validity: whether the intended subspace drift was actually reduced.
+
+Do not claim that the transferable subspace is uniquely causal unless it beats matched-rank random and language-specific controls at comparable plasticity.
