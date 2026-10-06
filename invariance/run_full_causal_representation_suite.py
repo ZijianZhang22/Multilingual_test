@@ -239,9 +239,12 @@ def main():
                     "--grad_accum", args.grad_accum,
                     "--eval_batch", args.eval_batch,
                     "--out_dir", sweep_dir,
-                    "--save_checkpoints",
-                    "--save_methods", *methods,
-                    "--save_lambdas", args.manipulation_lambda,
+                    "--feature_extract_data", args.xnli_probe,
+                    "--feature_extract_dir",
+                    analysis_root / f"seed{seed}" / f"{old}_to_{new}" / "manipulation" / "features",
+                    "--feature_extract_methods", *methods,
+                    "--feature_extract_lambdas", args.manipulation_lambda,
+                    "--feature_extract_batch", args.extract_batch,
                 ],
                 force=args.force,
             )
@@ -281,10 +284,13 @@ def main():
             )
 
             # ----------------------------------------------------------
-            # 6) Manipulation check on saved full-FT + lambda checkpoints:
-            # Did each intervention actually suppress the intended drift?
+            # 6) Manipulation check using features extracted in memory during
+            # the sweep. This avoids writing ~1 GB model checkpoints for every
+            # intervention solely for representation analysis.
             # ----------------------------------------------------------
-            manip_dir = analysis_root / f"seed{seed}" / f"{old}_to_{new}" / "manipulation"
+            manip_dir = (
+                analysis_root / f"seed{seed}" / f"{old}_to_{new}" / "manipulation"
+            )
             features_dir = manip_dir / "features"
             features_dir.mkdir(parents=True, exist_ok=True)
 
@@ -302,34 +308,19 @@ def main():
                 force=args.force,
             )
 
-            saved = sweep_dir / "checkpoints"
             intervention_features = []
             for method in methods:
                 if method == "full_ft":
-                    ckpt = saved / "full_ft"
-                    label = "full_ft"
+                    feat = features_dir / "full_ft.pt"
                 else:
-                    ckpt = saved / f"{method}_lam{args.manipulation_lambda:g}"
-                    label = f"{method}_lam{args.manipulation_lambda:g}"
-
-                if not ckpt.exists():
-                    print(f"WARNING: manipulation checkpoint missing: {ckpt}")
-                    continue
-
-                feat = features_dir / f"{label}.pt"
-                maybe_run(
-                    feat,
-                    [
-                        py, inv / "extract_hidden.py",
-                        "--checkpoint", ckpt,
-                        "--data_file", args.xnli_probe,
-                        "--out_file", feat,
-                        "--layers", args.layer,
-                        "--batch_size", args.extract_batch,
-                    ],
-                    force=args.force,
-                )
-                intervention_features.append(feat)
+                    feat = (
+                        features_dir
+                        / f"{method}_lam{args.manipulation_lambda:g}.pt"
+                    )
+                if feat.exists():
+                    intervention_features.append(feat)
+                else:
+                    print(f"WARNING: manipulation feature missing: {feat}")
 
             drift_csv = manip_dir / "intervention_drift.csv"
             if intervention_features:
