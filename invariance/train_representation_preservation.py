@@ -360,6 +360,19 @@ def main():
     )
     ap.add_argument("--no_bf16", action="store_true")
     ap.add_argument("--save_checkpoints", action="store_true")
+    ap.add_argument(
+        "--save_methods",
+        nargs="*",
+        default=None,
+        help="If set, only save checkpoints for these methods.",
+    )
+    ap.add_argument(
+        "--save_lambdas",
+        nargs="*",
+        type=float,
+        default=None,
+        help="If set, only save checkpoints whose lambda matches one of these values.",
+    )
     args = ap.parse_args()
 
     if not torch.cuda.is_available():
@@ -559,7 +572,17 @@ def main():
             )
         rows.append(row)
 
-        if args.save_checkpoints:
+        should_save = args.save_checkpoints
+        if should_save and args.save_methods is not None:
+            should_save = method in args.save_methods
+        if (
+            should_save
+            and method != "full_ft"
+            and args.save_lambdas is not None
+        ):
+            should_save = any(abs(lam - x) < 1e-12 for x in args.save_lambdas)
+
+        if should_save:
             name = method if method == "full_ft" else f"{method}_lam{lam:g}"
             save_checkpoint(model, tok, out_dir / "checkpoints" / name)
 
@@ -616,6 +639,8 @@ def main():
         ),
         "loss_normalization": "per represented dimension",
         "max_train_blocks": args.max_train_blocks,
+        "save_methods": args.save_methods,
+        "save_lambdas": args.save_lambdas,
     }
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
