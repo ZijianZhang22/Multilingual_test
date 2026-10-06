@@ -30,6 +30,7 @@ python invariance/train_sequence.py \
   --model_name Qwen/Qwen2.5-0.5B \
   --data_dir invariance_data/wiki \
   --sequences en,zh zh,en \
+  --eval_languages en zh fr \
   --out_dir invariance_runs/sequence_seed0 \
   --seed 0 \
   --micro_batch 4 \
@@ -148,3 +149,111 @@ language order
 - XNLI is only the first task; a publishable study should eventually test more than one shared cross-lingual capability.
 
 Only if this PoC produces a clear signal should we add CKA, gradient alignment, causal interventions, or invariant-preservation training.
+
+
+## 7. Validate that the representation is really cross-lingual
+
+The basic layer summary is not enough. A useful invariant representation should survive stronger tests.
+
+### 7.1 Leave one language out
+
+Fit the representation using only two languages and evaluate on the third language that the probe never saw:
+
+```bash
+python invariance/validate_leave_one_language_out.py \
+  --features_file invariance_features/base.pt \
+  --out_file invariance_analysis/leave_one_language_out.csv \
+  --proj_dim 64 \
+  --irm_lambdas 0 1
+```
+
+This runs both ERM (`irm_lambda=0`) and IRM (`irm_lambda=1`) under the same protocol. Examples:
+
+```text
+train EN + ZH -> test FR
+train EN + FR -> test ZH
+train ZH + FR -> test EN
+```
+
+A candidate invariant representation is more convincing if held-out-language task accuracy remains strong, especially if IRM improves over the ERM control.
+
+### 7.2 Frozen probe versus re-fitted probe
+
+After extracting features from later checkpoints, compare the original frozen base probe to a freshly re-fitted probe at exactly the same layer:
+
+```bash
+python invariance/validate_frozen_vs_refit.py \
+  --reference_probe invariance_probes/base/probe_layer_12.pt \
+  --features_files \
+    invariance_features/base.pt \
+    invariance_features/en__zh_stage1.pt \
+    invariance_features/en__zh_stage2.pt \
+    invariance_features/zh__en_stage1.pt \
+    invariance_features/zh__en_stage2.pt \
+  --out_file invariance_analysis/frozen_vs_refit.csv
+```
+
+Again, use the actual layer selected in `best_probe.json`, not necessarily layer 12.
+
+Interpretation:
+
+- frozen probe drops, re-fitted probe recovers: the information may still exist but the old invariant coordinates became less accessible;
+- both frozen and re-fitted probes drop: stronger evidence that shared task information itself degraded;
+- neither drops: this particular invariant representation is stable under the language adaptation.
+
+The script also writes:
+
+```text
+invariance_analysis/frozen_vs_refit_summary.csv
+```
+
+with mean frozen accuracy, mean re-fitted accuracy, and the recovery gap for each checkpoint.
+
+### 7.3 Link invariant drift to language forgetting
+
+The sequence trainer now records stage-0 losses as well as later-stage losses. It can also evaluate a language that is not in the training sequence, for example FR:
+
+```bash
+python invariance/train_sequence.py \
+  --model_name Qwen/Qwen2.5-0.5B \
+  --data_dir invariance_data/wiki \
+  --sequences en,zh zh,en \
+  --eval_languages en zh fr \
+  --out_dir invariance_runs/sequence_seed0 \
+  --seed 0
+```
+
+Once `frozen_vs_refit_summary.csv` exists:
+
+```bash
+python invariance/analyze_invariance_forgetting.py \
+  --sequence_metrics invariance_runs/sequence_seed0/all_sequence_metrics.csv \
+  --invariance_summary invariance_analysis/frozen_vs_refit_summary.csv \
+  --out_dir invariance_analysis/forgetting_link
+```
+
+This computes, for each sequence/stage/language:
+
+```text
+forgetting_loss_delta
+invariant_access_drop
+refit_information_drop
+recovery_gap_accuracy
+```
+
+and reports their Pearson correlations.
+
+With only EN/ZH orders and one seed, these correlations are **diagnostic only**. A paper-level claim needs more language transitions and multiple seeds.
+
+## Validation checklist
+
+A candidate invariant representation should ideally pass all of these:
+
+1. high shared XNLI task accuracy;
+2. low risk variance across languages;
+3. reduced language-ID decodability;
+4. non-trivial leave-one-language-out transfer;
+5. frozen-probe drift that systematically relates to forgetting;
+6. a useful distinction between frozen-probe loss and re-fitted-probe recovery.
+
+Only after these diagnostics show a repeatable signal should we add invariant-preserving continual training as a causal intervention.
