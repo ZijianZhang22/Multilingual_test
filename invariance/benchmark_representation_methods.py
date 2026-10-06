@@ -106,6 +106,10 @@ def fit_projection_method(
     n_classes = int(y.max().item()) + 1
     train_envs = sorted(set(env_y[train_idx].tolist()))
 
+    # Seed BEFORE constructing trainable modules so method comparisons are
+    # paired and reproducible.
+    set_seed(seed)
+
     if method == "dann":
         env_to_local = {e: i for i, e in enumerate(train_envs)}
         local_env_y = torch.tensor(
@@ -121,7 +125,6 @@ def fit_projection_method(
             x.shape[1], proj_dim, n_classes
         ).to(x.device)
 
-    set_seed(seed)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     for _ in range(epochs):
@@ -514,8 +517,11 @@ def main():
 
     for layer in layers:
         x = payload["features"][str(layer)].float().to(device)
-        for method_idx, method in enumerate(args.methods):
-            seed = args.seed + layer * 1009 + method_idx * 97
+        for method in args.methods:
+            # Use the SAME initialization seed for every method at a layer.
+            # Method-specific seed offsets would confound method effects with
+            # random projection/head initialization.
+            seed = args.seed + layer * 1009
             metrics = benchmark_all_languages(
                 method,
                 x,
