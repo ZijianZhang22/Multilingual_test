@@ -3,7 +3,6 @@ import csv
 import math
 from pathlib import Path
 
-import numpy as np
 import torch
 
 from benchmark_representation_methods import fit_inlp, make_split_indices
@@ -72,6 +71,10 @@ def drift_metrics(delta, q_lang):
     }
 
 
+def prefix_dict(d, prefix):
+    return {f"{prefix}{k}": v for k, v in d.items()}
+
+
 def representation_energy_metrics(x, q_lang):
     total_e = squared_norm_rows(x)
     lang_e = squared_norm_rows(x @ q_lang)
@@ -91,8 +94,6 @@ def subspace_similarity(q0, qt):
             "max_principal_angle_deg": float("nan"),
         }
 
-    # Q columns are orthonormal. Singular values of Q0^T Qt are cosines of
-    # principal angles. Overlap = normalized projector overlap in [0, 1].
     s = torch.linalg.svdvals(q0.T @ qt).float().clamp(0.0, 1.0)
     angles = torch.rad2deg(torch.acos(s))
     denom = min(q0.shape[1], qt.shape[1])
@@ -103,6 +104,16 @@ def subspace_similarity(q0, qt):
         "mean_principal_angle_deg": float(angles.mean().item()),
         "max_principal_angle_deg": float(angles.max().item()),
     }
+
+
+def find_anchor_stage(records_for_sequence, current_stage, language):
+    """Latest PRIOR stage at which language was trained; otherwise stage 0."""
+    candidates = [
+        stage
+        for stage, rec in records_for_sequence.items()
+        if stage < current_stage and rec["trained_language"] == language
+    ]
+    return max(candidates) if candidates else 0
 
 
 def main():
@@ -170,86 +181,134 @@ def main():
         out / "reference_inlp_language_subspace.pt",
     )
 
-    summary_rows = []
-    lang_rows = []
-
-    for file_idx, path in enumerate(args.features_files):
+    # Load every checkpoint first so we can compute drift from the correct
+    # pre-forgetting anchor, not only from the pretrained base.
+    records = {}
+    for path in args.features_files:
         cur = torch.load(path, map_location="cpu")
         ensure_aligned(ref, cur, path)
         if layer not in cur["features"]:
             raise ValueError(f"{path}: layer {args.layer} not found")
 
-        xt = cur["features"][layer].float().to(device)
-        delta = xt - x0
-
-        # Refit the language-erasure basis at each checkpoint. This measures
-        # whether the linearly language-decodable directions themselves rotate.
-        _, q_t = fit_inlp(
-            xt,
-            language_ids,
-            train_idx,
-            iters=args.inlp_iters,
-            classifier_epochs=args.inlp_classifier_epochs,
-            classifier_lr=args.inlp_lr,
-            weight_decay=args.weight_decay,
-            seed=args.seed + file_idx * 1009,
-        )
-        q_t = q_t.to(device)
-
         checkpoint = cur.get("checkpoint", "")
         sequence, stage, trained_language = parse_sequence_stage(checkpoint)
+        if not sequence or stage < 0:
+            raise ValueError(f"Could not parse sequence/stage from {checkpoint}")
 
-        global_drift = drift_metrics(delta, q_ref)
-        global_energy = representation_energy_metrics(xt, q_ref)
-        subspace = subspace_similarity(q_ref, q_t)
-
-        summary = {
-            "features_file": path,
+        rec = {
+            "path": path,
             "checkpoint": checkpoint,
             "sequence": sequence,
             "stage": stage,
             "trained_language": trained_language,
-            "layer": args.layer,
-            "reference_lang_rank": int(q_ref.shape[1]),
-            **global_drift,
-            **global_energy,
-            **subspace,
+            "x": cur["features"][layer].float().to(device),
         }
-        summary_rows.append(summary)
+        records.setdefault(sequence, {})[stage] = rec
 
-        for lang in unique_langs:
-            idx = torch.tensor(
-                [
-                    i
-                    for i, (s, l) in enumerate(zip(splits, languages))
-                    if s == "probe_test" and l == lang
-                ],
-                dtype=torch.long,
-                device=device,
+    # Fit checkpoint-specific language subspaces with THE SAME seed at every
+    # checkpoint. Otherwise identical stage-0 features can appear to have a
+    # rotated subspace purely because INLP classifiers were initialized
+    # differently.
+    for sequence, seq_records in records.items():
+        for stage, rec in sorted(seq_records.items()):
+            _, q_t = fit_inlp(
+                rec["x"],
+                language_ids,
+                train_idx,
+                iters=args.inlp_iters,
+                classifier_epochs=args.inlp_classifier_epochs,
+                classifier_lr=args.inlp_lr,
+                weight_decay=args.weight_decay,
+                seed=args.seed,
             )
-            dm = drift_metrics(delta[idx], q_ref)
-            em = representation_energy_metrics(xt[idx], q_ref)
-            lang_rows.append({
-                "features_file": path,
+            rec["q"] = q_t.to(device)
+
+    summary_rows = []
+    lang_rows = []
+
+    for sequence, seq_records in records.items():
+        if 0 not in seq_records:
+            raise ValueError(f"{sequence}: missing stage0 checkpoint")
+
+        for stage, rec in sorted(seq_records.items()):
+            xt = rec["x"]
+            q_t = rec["q"]
+            checkpoint = rec["checkpoint"]
+            trained_language = rec["trained_language"]
+
+            base_delta = xt - x0
+            base_drift = drift_metrics(base_delta, q_ref)
+            global_energy = representation_energy_metrics(xt, q_ref)
+            base_subspace = subspace_similarity(q_ref, q_t)
+
+            # Also track one-step drift for a compact global diagnostic.
+            prev_stage = max([s for s in seq_records if s < stage], default=0)
+            prev_rec = seq_records[prev_stage]
+            step_delta = xt - prev_rec["x"]
+            step_drift = drift_metrics(step_delta, q_ref)
+            step_subspace = subspace_similarity(prev_rec["q"], q_t)
+
+            summary = {
+                "features_file": rec["path"],
                 "checkpoint": checkpoint,
                 "sequence": sequence,
                 "stage": stage,
                 "trained_language": trained_language,
                 "layer": args.layer,
-                "language": lang,
-                "n": int(idx.numel()),
-                **dm,
-                **em,
-                **subspace,
-            })
+                "reference_lang_rank": int(q_ref.shape[1]),
+                "previous_stage": int(prev_stage),
+                **prefix_dict(base_drift, "base_"),
+                **prefix_dict(step_drift, "step_"),
+                **global_energy,
+                **prefix_dict(base_subspace, "base_"),
+                **prefix_dict(step_subspace, "step_"),
+            }
+            summary_rows.append(summary)
 
-        print(
-            f"{sequence or '?'} stage={stage:<2} trained={trained_language:<4} "
-            f"drift={global_drift['mean_total_drift_l2']:.4f} "
-            f"lang_frac={global_drift['lang_drift_fraction']:.4f} "
-            f"lang/shared_per_dim={global_drift['lang_vs_shared_drift_per_dim_ratio']:.3f} "
-            f"subspace_overlap={subspace['lang_subspace_overlap']:.4f}"
-        )
+            for lang in unique_langs:
+                idx = torch.tensor(
+                    [
+                        i
+                        for i, (s, l) in enumerate(zip(splits, languages))
+                        if s == "probe_test" and l == lang
+                    ],
+                    dtype=torch.long,
+                    device=device,
+                )
+
+                anchor_stage = find_anchor_stage(seq_records, stage, lang)
+                anchor_rec = seq_records[anchor_stage]
+                anchor_delta = xt - anchor_rec["x"]
+                anchor_drift = drift_metrics(anchor_delta[idx], q_ref)
+                anchor_subspace = subspace_similarity(anchor_rec["q"], q_t)
+
+                base_lang_drift = drift_metrics(base_delta[idx], q_ref)
+                em = representation_energy_metrics(xt[idx], q_ref)
+
+                lang_rows.append({
+                    "features_file": rec["path"],
+                    "checkpoint": checkpoint,
+                    "sequence": sequence,
+                    "stage": stage,
+                    "trained_language": trained_language,
+                    "layer": args.layer,
+                    "language": lang,
+                    "n": int(idx.numel()),
+                    "anchor_stage": int(anchor_stage),
+                    **prefix_dict(base_lang_drift, "base_"),
+                    **prefix_dict(anchor_drift, "anchor_"),
+                    **em,
+                    **prefix_dict(base_subspace, "base_"),
+                    **prefix_dict(anchor_subspace, "anchor_"),
+                })
+
+            print(
+                f"{sequence} stage={stage:<2} trained={trained_language:<4} "
+                f"base_drift={base_drift['mean_total_drift_l2']:.4f} "
+                f"step_drift={step_drift['mean_total_drift_l2']:.4f} "
+                f"base_overlap={base_subspace['lang_subspace_overlap']:.4f} "
+                f"step_overlap={step_subspace['lang_subspace_overlap']:.4f}"
+            )
 
     summary_fields = sorted({k for r in summary_rows for k in r})
     with (out / "subspace_tracking_summary.csv").open(
