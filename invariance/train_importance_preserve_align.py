@@ -125,19 +125,25 @@ def main():
         out_dir / "importance_weights.pt",
     )
 
+    use_alignment = args.lambda_align != 0.0
     q_transfer = None
-    if args.transferable_subspace_file:
-        payload = torch.load(args.transferable_subspace_file, map_location="cpu")
-        q_transfer = payload["transferable_subspace_basis"].float().to(device)
-        if int(payload["layer"]) != args.layer:
-            raise ValueError("Transferable subspace layer mismatch")
+    pair_batches = None
+    tok = None
 
-    pairs = load_aligned_pairs(
-        args.aligned_data_file, args.old_language, args.new_language
-    )
-    pair_batches = batch_pairs(pairs, args.alignment_batch, args.seed + 4242)
+    if use_alignment:
+        if args.transferable_subspace_file:
+            payload = torch.load(args.transferable_subspace_file, map_location="cpu")
+            q_transfer = payload["transferable_subspace_basis"].float().to(device)
+            if int(payload["layer"]) != args.layer:
+                raise ValueError("Transferable subspace layer mismatch")
 
-    tok = load_tokenizer(args.anchor_checkpoint)
+        pairs = load_aligned_pairs(
+            args.aligned_data_file, args.old_language, args.new_language
+        )
+        pair_batches = batch_pairs(pairs, args.alignment_batch, args.seed + 4242)
+        tok = load_tokenizer(args.anchor_checkpoint)
+    else:
+        print("lambda_align=0: skipping aligned-XNLI loading and alignment forward passes.")
     anchor = load_model(
         args.anchor_checkpoint, device, use_bf16, trainable=False
     )
@@ -195,36 +201,39 @@ def main():
             (h_cur - h_anchor).pow(2) * weights.view(1, 1, -1)
         ).mean()
 
-        pair_batch = pair_batches[i % len(pair_batches)]
-        old_texts = [p[0] for p in pair_batch]
-        new_texts = [p[1] for p in pair_batch]
+        if use_alignment:
+            pair_batch = pair_batches[i % len(pair_batches)]
+            old_texts = [p[0] for p in pair_batch]
+            new_texts = [p[1] for p in pair_batch]
 
-        old_rep = pooled_hidden_from_texts(
-            anchor,
-            tok,
-            old_texts,
-            layer=args.layer,
-            max_length=args.alignment_max_length,
-            device=device,
-            use_bf16=use_bf16,
-            no_grad=True,
-        ).detach()
-        new_rep = pooled_hidden_from_texts(
-            model,
-            tok,
-            new_texts,
-            layer=args.layer,
-            max_length=args.alignment_max_length,
-            device=device,
-            use_bf16=use_bf16,
-            no_grad=False,
-        )
+            old_rep = pooled_hidden_from_texts(
+                anchor,
+                tok,
+                old_texts,
+                layer=args.layer,
+                max_length=args.alignment_max_length,
+                device=device,
+                use_bf16=use_bf16,
+                no_grad=True,
+            ).detach()
+            new_rep = pooled_hidden_from_texts(
+                model,
+                tok,
+                new_texts,
+                layer=args.layer,
+                max_length=args.alignment_max_length,
+                device=device,
+                use_bf16=use_bf16,
+                no_grad=False,
+            )
 
-        if q_transfer is not None:
-            old_rep = old_rep.float() @ q_transfer
-            new_rep = new_rep.float() @ q_transfer
+            if q_transfer is not None:
+                old_rep = old_rep.float() @ q_transfer
+                new_rep = new_rep.float() @ q_transfer
 
-        align_loss = normalized_alignment_loss(new_rep, old_rep)
+            align_loss = normalized_alignment_loss(new_rep, old_rep)
+        else:
+            align_loss = out.loss.new_zeros(())
 
         loss = (
             out.loss
