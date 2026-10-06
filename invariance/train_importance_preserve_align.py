@@ -52,6 +52,24 @@ def main():
         choices=["ratio", "old_fraction", "old_only"],
         default="old_fraction",
     )
+    ap.add_argument(
+        "--weight_control",
+        choices=["importance", "uniform", "shuffled"],
+        default="importance",
+        help=(
+            "Which coordinate weights to use for representation preservation. "
+            "'importance' uses the estimated stability weights; 'uniform' uses "
+            "all-ones weights with the same mean scale; 'shuffled' randomly "
+            "permutes the estimated weights, preserving their exact distribution "
+            "while destroying coordinate identity."
+        ),
+    )
+    ap.add_argument(
+        "--weight_shuffle_seed",
+        type=int,
+        default=2026,
+        help="Seed used only for the shuffled-weight control.",
+    )
     ap.add_argument("--importance_batches", type=int, default=8)
     ap.add_argument("--importance_batch", type=int, default=2)
     ap.add_argument("--alignment_batch", type=int, default=8)
@@ -110,17 +128,37 @@ def main():
         device=device,
         use_bf16=use_bf16,
     )
-    weights = make_stability_weights(
+    base_weights = make_stability_weights(
         old_imp, new_imp, mode=args.importance_mode
-    ).to(device)
+    )
+
+    if args.weight_control == "importance":
+        weights = base_weights.clone()
+    elif args.weight_control == "uniform":
+        # make_stability_weights normalizes mean weight to 1.0, so an all-ones
+        # vector is the matched global-strength control.
+        weights = torch.ones_like(base_weights)
+    elif args.weight_control == "shuffled":
+        # Preserve the exact empirical weight distribution while destroying
+        # which hidden coordinate receives which weight.
+        g = torch.Generator(device="cpu").manual_seed(args.weight_shuffle_seed)
+        perm = torch.randperm(base_weights.numel(), generator=g)
+        weights = base_weights[perm]
+    else:
+        raise ValueError(args.weight_control)
+
+    weights = weights.to(device)
 
     torch.save(
         {
             "layer": args.layer,
             "old_importance": old_imp,
             "new_importance": new_imp,
+            "base_importance_weights": base_weights.cpu(),
             "stability_weights": weights.cpu(),
             "importance_mode": args.importance_mode,
+            "weight_control": args.weight_control,
+            "weight_shuffle_seed": args.weight_shuffle_seed,
         },
         out_dir / "importance_weights.pt",
     )
@@ -274,6 +312,8 @@ def main():
         "lambda_preserve": args.lambda_preserve,
         "lambda_align": args.lambda_align,
         "importance_mode": args.importance_mode,
+        "weight_control": args.weight_control,
+        "weight_shuffle_seed": args.weight_shuffle_seed,
         "old_language": args.old_language,
         "new_language": args.new_language,
         "tokens_seen": tokens_seen,
@@ -301,7 +341,7 @@ def main():
         json.dumps(vars(args), indent=2), encoding="utf-8"
     )
 
-    print("\n=== Importance Preserve + Align ===")
+    print(f"\n=== Preservation control: {args.weight_control} ===")
     print(
         f"forget={row['forgetting_loss_delta']:+.6f} "
         f"new_gain={row['new_language_gain']:+.6f}"
