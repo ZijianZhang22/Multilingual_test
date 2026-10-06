@@ -257,3 +257,87 @@ A candidate invariant representation should ideally pass all of these:
 6. a useful distinction between frozen-probe loss and re-fitted-probe recovery.
 
 Only after these diagnostics show a repeatable signal should we add invariant-preserving continual training as a causal intervention.
+
+
+## 8. Compare several representation-discovery / invariance methods
+
+A unified benchmark is available in:
+
+```text
+invariance/benchmark_representation_methods.py
+```
+
+It currently compares five methods under the same hidden-state features and evaluation protocol:
+
+- `ERM`: shared low-dimensional task projection without an invariance penalty;
+- `IRM`: shared task projection with the IRM gradient penalty;
+- `V-REx`: minimizes mean task risk plus variance of risk across language environments;
+- `DANN`: adversarially preserves XNLI information while making language ID harder to decode;
+- `INLP`: iteratively removes linearly decodable language directions, then fits the task head on the erased representation.
+
+The benchmark reports:
+
+```text
+mean_task_accuracy
+language_probe_accuracy
+risk_variance
+leave-one-language-out accuracy
+```
+
+and saves the learned representation artifacts for later continual-learning analysis.
+
+### Quick experiment: Layer 12 only
+
+Because the first IRM/LOO experiment showed the strongest cross-lingual signal around layer 12, start with:
+
+```bash
+python invariance/benchmark_representation_methods.py \
+  --features_file invariance_features/base.pt \
+  --out_dir invariance_analysis/method_benchmark_layer12 \
+  --layers 12 \
+  --methods erm irm vrex dann inlp \
+  --proj_dim 64 \
+  --epochs 250 \
+  --irm_lambda 1.0 \
+  --vrex_lambda 10.0 \
+  --dann_lambda 1.0 \
+  --inlp_iters 8
+```
+
+Important outputs:
+
+```text
+invariance_analysis/method_benchmark_layer12/all_language_summary.csv
+invariance_analysis/method_benchmark_layer12/leave_one_out.csv
+invariance_analysis/method_benchmark_layer12/leave_one_out_aggregate.csv
+```
+
+A useful method should ideally keep XNLI task accuracy high, push fresh language-probe accuracy toward chance (1/3 for EN/ZH/FR), and retain strong leave-one-language-out accuracy.
+
+### Full layer sweep
+
+If the layer-12 comparison is informative, run:
+
+```bash
+python invariance/benchmark_representation_methods.py \
+  --features_file invariance_features/base.pt \
+  --out_dir invariance_analysis/method_benchmark_all \
+  --methods erm irm vrex dann inlp \
+  --proj_dim 64 \
+  --epochs 250
+```
+
+This reuses the already extracted `base.pt`; no model forward passes are required.
+
+### Why these methods
+
+The methods intentionally test different notions of invariance:
+
+```text
+IRM   : one predictive rule should work across language environments
+V-REx : task risk should be stable across language environments
+DANN  : language identity should be hard to decode while task information remains
+INLP  : explicitly erase linearly decodable language directions
+```
+
+Therefore, agreement among several methods around the same layer/subspace is stronger evidence than relying on the IRM score alone.
