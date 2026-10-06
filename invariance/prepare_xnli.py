@@ -10,7 +10,7 @@ LABELS = {0: "entailment", 1: "neutral", 2: "contradiction"}
 
 
 def sample_rows(lang, split, n, seed):
-    ds = load_dataset("xnli", lang, split=split)
+    ds = load_dataset("facebook/xnli", lang, split=split)
     idx = list(range(len(ds)))
     rng = random.Random(seed)
     rng.shuffle(idx)
