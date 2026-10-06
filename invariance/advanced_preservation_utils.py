@@ -410,3 +410,88 @@ def mean_sae_activity(
         total = s if total is None else total + s
         count += z.shape[0]
     return total / max(count, 1)
+
+
+def estimate_sae_feature_importance(
+    checkpoint,
+    sae,
+    blocks,
+    *,
+    layer,
+    batch_size,
+    max_batches,
+    device,
+    use_bf16,
+):
+    """Feature-level Fisher-like importance using activation times feature gradient."""
+    model = load_model(checkpoint, device, use_bf16, trainable=True)
+    model.eval()
+    sae = sae.to(device)
+    sae.eval()
+    decoder_dirs = sae.decoder.weight.detach().float()  # [d_model, dict_size]
+
+    total = None
+    count = 0
+    for batch_idx, (x,) in enumerate(make_loader(blocks, batch_size)):
+        if batch_idx >= max_batches:
+            break
+        x = x.to(device, non_blocking=True)
+        model.zero_grad(set_to_none=True)
+
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=(device.type == "cuda" and use_bf16),
+        ):
+            out = model(
+                input_ids=x,
+                labels=x,
+                output_hidden_states=True,
+                use_cache=False,
+            )
+
+        h = out.hidden_states[layer]
+        grad_h = torch.autograd.grad(out.loss, h, retain_graph=False)[0].float()
+        flat_h = h.detach().float().reshape(-1, h.shape[-1])
+        flat_g = grad_h.reshape(-1, grad_h.shape[-1])
+
+        with torch.no_grad():
+            z = sae.encode(flat_h)
+            grad_z = flat_g @ decoder_dirs
+            score = (z * grad_z).pow(2).sum(dim=0).cpu()
+
+        total = score if total is None else total + score
+        count += flat_h.shape[0]
+
+    del model
+    torch.cuda.empty_cache()
+    if total is None:
+        raise RuntimeError("No batches used for SAE feature importance")
+    return total / max(count, 1)
+
+
+def select_top_feature_mask(
+    old_importance,
+    new_importance,
+    *,
+    top_k,
+    mode="ratio",
+    eps=1e-12,
+):
+    old_importance = old_importance.float().clamp_min(0)
+    new_importance = new_importance.float().clamp_min(0)
+
+    if mode == "ratio":
+        score = old_importance / (new_importance + eps)
+    elif mode == "old_fraction":
+        score = old_importance / (old_importance + new_importance + eps)
+    elif mode == "old_only":
+        score = old_importance
+    else:
+        raise ValueError(mode)
+
+    top_k = min(int(top_k), score.numel())
+    idx = torch.topk(score, k=top_k, largest=True).indices
+    mask = torch.zeros_like(score)
+    mask[idx] = 1.0
+    return mask, score
