@@ -108,6 +108,15 @@ def main():
     ap.add_argument("--weight_decay", type=float, default=None)
     ap.add_argument("--irm_lambda", type=float, default=None)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--independent_refit_seeds",
+        action="store_true",
+        help=(
+            "By default every checkpoint refit uses the SAME initialization seed, "
+            "so anchor-vs-post differences are paired rather than confounded by "
+            "probe initialization. Set this flag only for diagnostic independent refits."
+        ),
+    )
     ap.add_argument("--cpu", action="store_true")
     args = ap.parse_args()
 
@@ -182,7 +191,11 @@ def main():
             epochs=epochs,
             lr=lr,
             weight_decay=weight_decay,
-            seed=args.seed + file_idx * 1009,
+            seed=(
+                args.seed + file_idx * 1009
+                if args.independent_refit_seeds
+                else args.seed
+            ),
             device=device,
         )
         refit_by_lang, refit_mean_acc, refit_mean_loss = eval_probe(
