@@ -12,7 +12,10 @@ from invariance.train_sequence import load_blocks, make_loader, evaluate  # noqa
 
 
 def seed_all(seed):
-    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 def get_layers(model):
@@ -41,7 +44,9 @@ class RandomLayerMask:
         self.ratio = float(ratio)
         if self.ratio == 1.0:
             for p in layer.parameters():
-                self.total += p.numel(); self.frozen += p.numel(); p.requires_grad_(False)
+                self.total += p.numel()
+                self.frozen += p.numel()
+                p.requires_grad_(False)
             return
         gen = torch.Generator(device="cpu").manual_seed(seed)
         for p in layer.parameters():
@@ -71,76 +76,184 @@ class RandomLayerMask:
             h.remove()
 
 
-def train(model, blocks, args, device, use_bf16, mask=None):
+def train(
+    model,
+    anchor,
+    blocks,
+    args,
+    device,
+    use_bf16,
+    *,
+    mask=None,
+    preserve_layer=None,
+):
+    """Train on the new language with optional full hidden-state preservation.
+
+    For a targeted condition:
+        total_loss = LM_loss + lambda_preserve * mean((h - h_anchor)^2)
+
+    Hidden-state indexing follows transformers convention:
+    hidden_states[0] is embeddings, hidden_states[L] is output of transformer block L.
+    Therefore preserve_layer=12 corresponds to user-facing layer 12.
+    """
     opt_params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(opt_params, lr=args.lr, weight_decay=args.weight_decay)
     opt.zero_grad(set_to_none=True)
+
     tokens = 0
+    total_lm = 0.0
+    total_pres = 0.0
+    n_batches = 0
     loader = make_loader(blocks, args.micro_batch)
+
+    use_preservation = preserve_layer is not None and args.lambda_preserve > 0
+    if use_preservation:
+        anchor.eval()
+
     for i, (x,) in enumerate(loader):
         x = x.to(device, non_blocking=True)
+
+        h_anchor = None
+        if use_preservation:
+            with torch.no_grad():
+                with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_bf16):
+                    anchor_out = anchor(
+                        input_ids=x,
+                        output_hidden_states=True,
+                        use_cache=False,
+                    )
+                h_anchor = anchor_out.hidden_states[preserve_layer].detach().float()
+
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_bf16):
-            loss = model(input_ids=x, labels=x, use_cache=False).loss / args.grad_accum
-        loss.backward(); tokens += x.numel()
+            out = model(
+                input_ids=x,
+                labels=x,
+                output_hidden_states=use_preservation,
+                use_cache=False,
+            )
+            lm_loss = out.loss
+
+        if use_preservation:
+            delta = out.hidden_states[preserve_layer].float() - h_anchor
+            pres_loss = delta.pow(2).mean()
+        else:
+            pres_loss = torch.zeros((), device=device, dtype=torch.float32)
+
+        total_loss = lm_loss + args.lambda_preserve * pres_loss
+        (total_loss / args.grad_accum).backward()
+
+        total_lm += float(lm_loss.detach())
+        total_pres += float(pres_loss.detach())
+        n_batches += 1
+        tokens += x.numel()
+
         if (i + 1) % args.grad_accum == 0 or i + 1 == len(loader):
             torch.nn.utils.clip_grad_norm_(opt_params, 1.0)
             opt.step()
-            if mask: mask.restore()
+            if mask:
+                mask.restore()
             opt.zero_grad(set_to_none=True)
-    return tokens
+
+    return {
+        "tokens_seen": tokens,
+        "mean_train_lm_loss": total_lm / max(n_batches, 1),
+        "mean_preserve_loss": total_pres / max(n_batches, 1),
+    }
+
+
+def lambda_tag(x):
+    return f"{x:g}".replace(".", "p")
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--anchor_checkpoint", default="invariance_runs/sequence_seed0/en__zh/stage1_en")
     p.add_argument("--data_dir", default="invariance_data/wiki")
-    p.add_argument("--old_language", default="en"); p.add_argument("--new_language", default="zh")
+    p.add_argument("--old_language", default="en")
+    p.add_argument("--new_language", default="zh")
     p.add_argument("--layers", type=int, nargs="+", default=[12, 20, 24])
     p.add_argument("--freeze_ratios", type=float, nargs="+", default=[0.2, 0.8, 1.0])
+    p.add_argument(
+        "--lambda_preserve",
+        type=float,
+        default=3.0,
+        help=(
+            "Weight on full hidden-state preservation at the targeted layer: "
+            "L = L_new + lambda * MSE(h_current, h_anchor). "
+            "Set 0 to recover the original freezing-only pilot."
+        ),
+    )
     p.add_argument("--train_fraction", type=float, default=0.20)
     p.add_argument("--eval_max_blocks", type=int, default=128)
-    p.add_argument("--seed", type=int, default=0); p.add_argument("--data_shuffle_seed", type=int, default=1001)
-    p.add_argument("--lr", type=float, default=2e-5); p.add_argument("--weight_decay", type=float, default=0.1)
-    p.add_argument("--micro_batch", type=int, default=4); p.add_argument("--grad_accum", type=int, default=4)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--data_shuffle_seed", type=int, default=1001)
+    p.add_argument("--lr", type=float, default=2e-5)
+    p.add_argument("--weight_decay", type=float, default=0.1)
+    p.add_argument("--micro_batch", type=int, default=4)
+    p.add_argument("--grad_accum", type=int, default=4)
     p.add_argument("--eval_batch", type=int, default=8)
     p.add_argument("--out_dir", default="random_layer_freeze_runs/en_to_zh_seed0")
     p.add_argument("--skip_full_ft", action="store_true")
     p.add_argument("--save_checkpoints", action="store_true")
     args = p.parse_args()
 
-    if not torch.cuda.is_available(): raise RuntimeError("CUDA GPU required")
-    if not 0 < args.train_fraction <= 1: raise ValueError("train_fraction must be in (0,1]")
-    if any(r < 0 or r > 1 for r in args.freeze_ratios): raise ValueError("freeze ratios must be in [0,1]")
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA GPU required")
+    if not 0 < args.train_fraction <= 1:
+        raise ValueError("train_fraction must be in (0,1]")
+    if any(r < 0 or r > 1 for r in args.freeze_ratios):
+        raise ValueError("freeze ratios must be in [0,1]")
+    if args.lambda_preserve < 0:
+        raise ValueError("lambda_preserve must be >= 0")
 
     device = torch.device("cuda")
     bf16 = torch.cuda.is_bf16_supported()
-    out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
     new_train = load_blocks(Path(args.data_dir) / f"{args.new_language}_train.pt")
     old_val = load_blocks(Path(args.data_dir) / f"{args.old_language}_val.pt")
     new_val = load_blocks(Path(args.data_dir) / f"{args.new_language}_val.pt")
     if args.eval_max_blocks > 0:
         old_val, new_val = old_val[:args.eval_max_blocks], new_val[:args.eval_max_blocks]
+
     g = torch.Generator().manual_seed(args.data_shuffle_seed)
     perm = torch.randperm(len(new_train), generator=g)
     n = max(1, round(len(new_train) * args.train_fraction))
     new_train = new_train[perm[:n]]
 
     tok = AutoTokenizer.from_pretrained(args.anchor_checkpoint, use_fast=True)
-    if tok.pad_token_id is None: tok.pad_token = tok.eos_token
+    if tok.pad_token_id is None:
+        tok.pad_token = tok.eos_token
 
+    # Keep one frozen anchor resident so every intervention is compared with the
+    # exact same stage-1 representation.
     anchor = load_model(args.anchor_checkpoint, device, bf16)
+    anchor.eval()
+    for p_anchor in anchor.parameters():
+        p_anchor.requires_grad_(False)
+
     n_layers = len(get_layers(anchor))
     for l in args.layers:
-        if not 1 <= l <= n_layers: raise ValueError(f"layer {l} invalid; model has {n_layers} blocks")
+        if not 1 <= l <= n_layers:
+            raise ValueError(f"layer {l} invalid; model has {n_layers} blocks")
+
     a_old = evaluate(anchor, old_val, args.eval_batch, device, bf16)
     a_new = evaluate(anchor, new_val, args.eval_batch, device, bf16)
-    print(f"[anchor] old={a_old:.6f} new={a_new:.6f}; train_blocks={len(new_train)}")
-    del anchor; torch.cuda.empty_cache()
+    print(
+        f"[anchor] old={a_old:.6f} new={a_new:.6f}; "
+        f"train_blocks={len(new_train)} lambda={args.lambda_preserve:g}"
+    )
 
     jobs = []
-    if not args.skip_full_ft: jobs.append(("full_ft", None, 0.0))
-    jobs += [(f"layer{l}_freeze{int(r*100)}", l, r) for l in args.layers for r in args.freeze_ratios]
+    if not args.skip_full_ft:
+        jobs.append(("full_ft", None, 0.0))
+    lam_tag = lambda_tag(args.lambda_preserve)
+    jobs += [
+        (f"layer{l}_freeze{int(r*100)}_lam{lam_tag}", l, r)
+        for l in args.layers
+        for r in args.freeze_ratios
+    ]
 
     rows = []
     for j, (name, layer_no, ratio) in enumerate(jobs, 1):
@@ -148,51 +261,103 @@ def main():
         seed_all(args.seed)
         model = load_model(args.anchor_checkpoint, device, bf16)
         layers = get_layers(model)
+
         mask = None
         actual = 0.0
         layer_params = 0
+        lam_this = 0.0 if layer_no is None else args.lambda_preserve
+
         if layer_no is not None:
             mask_seed = args.seed + 100000 + layer_no * 1000 + int(ratio * 100)
             mask = RandomLayerMask(layers[layer_no - 1], ratio, mask_seed)
             actual, layer_params = mask.actual_ratio, mask.total
-            print(f"layer={layer_no} requested={ratio:.2f} actual={actual:.4f} params={layer_params:,}")
+            print(
+                f"layer={layer_no} requested_freeze={ratio:.2f} "
+                f"actual_freeze={actual:.4f} lambda={lam_this:g} "
+                f"params={layer_params:,}"
+            )
 
-        tokens = train(model, new_train, args, device, bf16, mask)
+        stats = train(
+            model,
+            anchor,
+            new_train,
+            args,
+            device,
+            bf16,
+            mask=mask,
+            preserve_layer=layer_no,
+        )
+
         p_old = evaluate(model, old_val, args.eval_batch, device, bf16)
         p_new = evaluate(model, new_val, args.eval_batch, device, bf16)
         forget, gain = p_old - a_old, a_new - p_new
-        print(f"forget={forget:+.6f} new_gain={gain:+.6f}")
+        print(
+            f"forget={forget:+.6f} new_gain={gain:+.6f} "
+            f"train_lm={stats['mean_train_lm_loss']:.6f} "
+            f"pres={stats['mean_preserve_loss']:.6f}"
+        )
 
         if args.save_checkpoints:
-            d = out / "checkpoints" / name; d.mkdir(parents=True, exist_ok=True)
-            model.save_pretrained(d); tok.save_pretrained(d)
+            d = out / "checkpoints" / name
+            d.mkdir(parents=True, exist_ok=True)
+            model.save_pretrained(d)
+            tok.save_pretrained(d)
 
         rows.append({
-            "condition": name, "target_layer_1based": "" if layer_no is None else layer_no,
-            "freeze_ratio_requested": ratio, "freeze_ratio_actual": actual,
-            "layer_parameter_count": layer_params, "train_fraction": args.train_fraction,
-            "train_blocks": len(new_train), "tokens_seen": tokens,
-            "anchor_old_loss": a_old, "anchor_new_loss": a_new,
-            "post_old_loss": p_old, "post_new_loss": p_new,
-            "forgetting": forget, "new_language_gain": gain,
+            "condition": name,
+            "target_layer_1based": "" if layer_no is None else layer_no,
+            "freeze_ratio_requested": ratio,
+            "freeze_ratio_actual": actual,
+            "lambda_preserve": lam_this,
+            "preservation_mode": "none" if layer_no is None or lam_this == 0 else "full_hidden_mse",
+            "layer_parameter_count": layer_params,
+            "train_fraction": args.train_fraction,
+            "train_blocks": len(new_train),
+            "tokens_seen": stats["tokens_seen"],
+            "mean_train_lm_loss": stats["mean_train_lm_loss"],
+            "mean_preserve_loss": stats["mean_preserve_loss"],
+            "anchor_old_loss": a_old,
+            "anchor_new_loss": a_new,
+            "post_old_loss": p_old,
+            "post_new_loss": p_new,
+            "forgetting": forget,
+            "new_language_gain": gain,
         })
-        if mask: mask.close()
-        del model; torch.cuda.empty_cache()
+
+        if mask:
+            mask.close()
+        del model
+        torch.cuda.empty_cache()
+
         with (out / "results_partial.csv").open("w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=rows[0].keys()); w.writeheader(); w.writerows(rows)
+            w = csv.DictWriter(f, fieldnames=rows[0].keys())
+            w.writeheader()
+            w.writerows(rows)
 
     base = next((r for r in rows if r["condition"] == "full_ft"), None)
     for r in rows:
-        r["forgetting_reduction_vs_full_ft"] = "" if base is None else base["forgetting"] - r["forgetting"]
-        r["plasticity_cost_vs_full_ft"] = "" if base is None else base["new_language_gain"] - r["new_language_gain"]
+        r["forgetting_reduction_vs_full_ft"] = (
+            "" if base is None else base["forgetting"] - r["forgetting"]
+        )
+        r["plasticity_cost_vs_full_ft"] = (
+            "" if base is None else base["new_language_gain"] - r["new_language_gain"]
+        )
 
     with (out / "results.csv").open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=rows[0].keys()); w.writeheader(); w.writerows(rows)
+        w = csv.DictWriter(f, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+
     (out / "manifest.json").write_text(json.dumps(vars(args), indent=2))
 
     print("\n=== summary (sorted by forgetting) ===")
     for r in sorted(rows, key=lambda x: x["forgetting"]):
-        print(f"{r['condition']:22s} forget={r['forgetting']:+.6f} gain={r['new_language_gain']:+.6f}")
+        print(
+            f"{r['condition']:30s} "
+            f"forget={r['forgetting']:+.6f} "
+            f"gain={r['new_language_gain']:+.6f} "
+            f"pres={r['mean_preserve_loss']:.6f}"
+        )
     print(f"\nSaved: {out/'results.csv'}")
 
 
