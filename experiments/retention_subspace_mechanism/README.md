@@ -62,3 +62,27 @@ The desired pattern is not merely lower forgetting under regularization. Strong 
 - Different subspaces separate retention-critical and plasticity-critical representational directions.
 
 That would support the mechanism claim that multilingual forgetting depends on **where and in which representational directions adaptation occurs**, not just the total amount of model change.
+
+
+## Expanded Step 2 (v2)
+
+The v2 mechanism suite fits candidate subspaces from five XNLI environments by default:
+
+- en, zh, fr, de, es
+- INLP language directions
+- transfer semantic PCA
+- anchor-to-adapted drift PCA
+- ISR-Cov class-conditional covariance-invariant directions
+- ISR-Multiclass-derived invariant semantic directions
+- VICReg-inspired orthonormal linear cross-lingual directions
+- one same-rank isotropic random control for every real subspace
+
+ISR-Cov uses class-conditional covariance differences and aggregates language-pair
+invariant eigenspaces through a projection/flag mean. ISR-Multiclass first recovers
+environment-varying multiclass mean directions and then takes semantic PCA inside
+the estimated invariant nullspace, because with a small number of language
+environments the exact ISR nullspace is much larger than the 64D causal-test budget.
+
+Step 3 and Step 4 now discover the real subspaces and their matched random
+controls from the Step-2 artifact automatically, so adding a new extractor does
+not require editing the causal intervention scripts.
