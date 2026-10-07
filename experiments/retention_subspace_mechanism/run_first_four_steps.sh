@@ -15,6 +15,7 @@ SUBSPACE_LANGUAGES="${SUBSPACE_LANGUAGES:-en zh fr de es}"
 STEP3_DIR="${STEP3_DIR:-mechanism_runs/step3_causal_removal_v2}"
 STEP4_DIR="${STEP4_DIR:-mechanism_runs/step4_causal_rescue_v2}"
 LOG_DIR="${LOG_DIR:-mechanism_runs/logs_first_four_steps}"
+ATLAS_DIR="${ATLAS_DIR:-mechanism_runs/functional_representation_atlas}"
 
 TRAIN_FRACTION="${TRAIN_FRACTION:-0.20}"
 LAMBDAS="${LAMBDAS:-5 20 50}"
@@ -123,6 +124,31 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Step 5: functional representation atlas across depth.
+# ----------------------------------------------------------------------
+echo
+echo "===== [5] Functional representation atlas ====="
+if [[ -f "$ATLAS_DIR/functional_subspace_profile.csv" ]]; then
+  echo "Functional atlas already complete; skipping."
+else
+  python experiments/retention_subspace_mechanism/analyze_functional_representation_atlas.py \
+    --anchor_checkpoint "$ANCHOR" \
+    --adapted_checkpoint "$ADAPTED" \
+    --languages $SUBSPACE_LANGUAGES \
+    --layers 4 8 12 16 20 24 \
+    --rank 64 \
+    --probe_train_per_lang 800 \
+    --probe_test_per_lang 800 \
+    --aligned_examples 1200 \
+    --probe_epochs 60 \
+    --vicreg_epochs 150 \
+    --step3_dir "$STEP3_DIR" \
+    --step4_dir "$STEP4_DIR" \
+    --out_dir "$ATLAS_DIR" \
+    2>&1 | tee "$LOG_DIR/05_functional_atlas.log"
+fi
+
+# ----------------------------------------------------------------------
 # Compact cross-step summary.
 # ----------------------------------------------------------------------
 python - <<PY
@@ -190,6 +216,7 @@ echo "Step 1: $STEP1_DIR/results.csv"
 echo "Step 2: $STEP2_DIR/summary.json"
 echo "Step 3: $STEP3_DIR/matched_random_comparison.csv"
 echo "Step 4: $STEP4_DIR/matched_random_rescue_comparison.csv"
+echo "Atlas:  $ATLAS_DIR/functional_subspace_profile.csv"
 echo "Upload: $PACKAGE_NAME"
 echo "============================================================"
 ls -lh "$PACKAGE_NAME"
