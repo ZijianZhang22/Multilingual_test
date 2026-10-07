@@ -2,7 +2,8 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-LAMBDA_PRESERVE="${LAMBDA_PRESERVE:-3.0}"\nPILOT_DIR="${PILOT_DIR:-random_layer_freeze_runs/en_to_zh_seed0_lam${LAMBDA_PRESERVE}}"
+LAMBDA_PRESERVE="${LAMBDA_PRESERVE:-3.0}"
+PILOT_DIR="${PILOT_DIR:-random_layer_freeze_runs/en_to_zh_seed0_lam${LAMBDA_PRESERVE}}"
 
 python experiments/random_layer_freeze_pilot/analyze_mechanisms.py \
   --pilot_dir "$PILOT_DIR" \
