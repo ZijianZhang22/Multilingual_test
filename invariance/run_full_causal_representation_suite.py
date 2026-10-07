@@ -107,6 +107,46 @@ def main():
         parsed_dirs.append((old, new))
     train_languages = sorted({x for pair in parsed_dirs for x in pair})
 
+    # Use only evaluation languages for which Wikipedia validation blocks exist.
+    # This makes the suite robust when the local setup contains EN/ZH but no FR.
+    optional_eval_languages = [
+        lang for lang in ["fr"]
+        if (Path(args.data_dir) / f"{lang}_val.pt").exists()
+    ]
+    eval_languages = sorted(set(train_languages + optional_eval_languages))
+
+    # Ensure the probe set exists. The base representation reference must be
+    # extracted on the same fixed probe examples used throughout the suite.
+    probe_path = Path(args.xnli_probe)
+    maybe_run(
+        probe_path,
+        [
+            py, inv / "prepare_xnli.py",
+            "--languages", *train_languages,
+            "--train_per_lang", 1200,
+            "--test_per_lang", 1200,
+            "--seed", 2026,
+            "--out_file", probe_path,
+        ],
+        force=False,
+    )
+
+    # The historical pipeline expected invariance_features/base.pt to have been
+    # prepared manually. Build it automatically from the base model when absent.
+    base_features = Path(args.base_features)
+    maybe_run(
+        base_features,
+        [
+            py, inv / "extract_hidden.py",
+            "--checkpoint", args.model_name,
+            "--data_file", probe_path,
+            "--out_file", base_features,
+            "--layers", args.layer,
+            "--batch_size", args.extract_batch,
+        ],
+        force=args.force,
+    )
+
     # ------------------------------------------------------------------
     # 1) Fit the reusable INLP language subspace from base Layer-12 features.
     # ------------------------------------------------------------------
@@ -115,7 +155,7 @@ def main():
         lang_subspace,
         [
             py, inv / "fit_inlp_language_subspace.py",
-            "--features_file", args.base_features,
+            "--features_file", base_features,
             "--out_file", lang_subspace,
             "--layer", args.layer,
             "--iters", args.inlp_iters,
@@ -132,7 +172,7 @@ def main():
         aligned_jsonl,
         [
             py, inv / "prepare_aligned_xnli.py",
-            "--languages", *train_languages, "fr",
+            "--languages", *train_languages,
             "--split", "validation",
             "--n_examples", 2000,
             "--out_file", aligned_jsonl,
@@ -188,7 +228,7 @@ def main():
                 "--model_name", args.model_name,
                 "--data_dir", args.data_dir,
                 "--sequences", *seq_args,
-                "--eval_languages", *sorted(set(train_languages + ["fr"])),
+                "--eval_languages", *eval_languages,
                 "--out_dir", sequence_dir,
                 "--seed", seed,
                 "--lr", args.lr,
@@ -226,7 +266,7 @@ def main():
                     "--data_dir", args.data_dir,
                     "--old_language", old,
                     "--new_language", new,
-                    "--eval_languages", *sorted(set(train_languages + ["fr"])),
+                    "--eval_languages", *eval_languages,
                     "--methods", *methods,
                     "--lambdas", *lambdas,
                     "--layer", args.layer,
@@ -265,7 +305,7 @@ def main():
                     "--data_dir", args.data_dir,
                     "--old_language", old,
                     "--new_language", new,
-                    "--eval_languages", *sorted(set(train_languages + ["fr"])),
+                    "--eval_languages", *eval_languages,
                     "--methods", *methods,
                     "--lambdas", args.curve_lambda,
                     "--curve_fractions", *curve_fractions,
