@@ -151,6 +151,14 @@ def main():
     payload = torch.load(args.subspace_file, map_location="cpu")
     layer_no = int(payload["layer"])
     subspaces = {k: v.float() for k, v in payload["subspaces"].items()}
+    real_subspaces = payload.get(
+        "real_subspaces",
+        [k for k in subspaces if not k.startswith("random_")],
+    )
+    matched_controls = payload.get(
+        "matched_random_controls",
+        {k: f"random_{k}" for k in real_subspaces},
+    )
 
     langs = [args.old_language, args.new_language]
     val = {}
@@ -204,10 +212,13 @@ def main():
 
     for name, q in subspaces.items():
         match = ""
-        if name in {"language", "transfer", "drift"}:
-            match = f"random_{name}"
-        elif name.startswith("random_"):
-            match = name.removeprefix("random_")
+        if name in matched_controls:
+            match = matched_controls[name]
+        elif name in matched_controls.values():
+            match = next(
+                real for real, ctrl in matched_controls.items()
+                if ctrl == name
+            )
 
         for alpha in args.alphas:
             for lang in langs:
@@ -268,8 +279,8 @@ def main():
     # Compare every real subspace against its matched random basis and compute
     # the old-language rescue / new-language plasticity tradeoff.
     paired = []
-    for real in ["language", "transfer", "drift"]:
-        random_name = f"random_{real}"
+    for real in real_subspaces:
+        random_name = matched_controls[real]
         for alpha in args.alphas:
             rr_old = next(
                 r for r in rows
@@ -342,6 +353,8 @@ def main():
         "old_language": args.old_language,
         "new_language": args.new_language,
         "alphas": args.alphas,
+        "real_subspaces": real_subspaces,
+        "matched_random_controls": matched_controls,
         "intervention": (
             "h_adapt <- h_adapt + alpha * P_S(h_anchor - h_adapt) "
             "at the selected transformer block output"
