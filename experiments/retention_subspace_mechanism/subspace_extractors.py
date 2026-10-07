@@ -263,12 +263,27 @@ def fit_vicreg_linear(
         torch.cuda.manual_seed_all(seed)
 
     # Group all available language views of each aligned semantic item.
-    groups = defaultdict(list)
+    # Build integer group IDs once, then compute group means with index_add in
+    # every epoch. This avoids a Python loop over thousands of semantic pairs.
+    raw_groups = defaultdict(list)
     for i, pid in enumerate(pair_ids):
-        groups[str(pid)].append(i)
-    groups = [idx for idx in groups.values() if len(idx) >= 2]
-    if not groups:
+        raw_groups[str(pid)].append(i)
+    valid_groups = [idx for idx in raw_groups.values() if len(idx) >= 2]
+    if not valid_groups:
         raise ValueError("VICReg-linear needs aligned groups with >=2 language views.")
+
+    kept = [i for grp in valid_groups for i in grp]
+    local_gid = []
+    for gid, grp in enumerate(valid_groups):
+        local_gid.extend([gid] * len(grp))
+
+    keep_idx = torch.tensor(kept, dtype=torch.long, device=device)
+    group_ids = torch.tensor(local_gid, dtype=torch.long, device=device)
+    n_groups = len(valid_groups)
+    counts = torch.bincount(group_ids, minlength=n_groups).to(torch.float32)
+
+    # Restrict to rows belonging to valid multilingual groups.
+    x = x[keep_idx]
 
     # Keep basis in original coordinates; only apply a global scalar for
     # numerical conditioning.
@@ -287,11 +302,12 @@ def fit_vicreg_linear(
         z = xn @ q
 
         # Invariance: every language view approaches its semantic group mean.
-        inv_terms = []
-        for idxs in groups:
-            zg = z[idxs]
-            inv_terms.append((zg - zg.mean(dim=0, keepdim=True)).pow(2).mean())
-        inv_loss = torch.stack(inv_terms).mean()
+        group_sum = torch.zeros(
+            n_groups, z.shape[1], device=device, dtype=z.dtype
+        )
+        group_sum.index_add_(0, group_ids, z)
+        group_mean = group_sum / counts[:, None].to(z.dtype)
+        inv_loss = (z - group_mean[group_ids]).pow(2).mean()
 
         # Variance and covariance terms follow VICReg's anti-collapse logic.
         std = torch.sqrt(z.var(dim=0, unbiased=False) + 1e-4)
@@ -334,6 +350,7 @@ def fit_vicreg_linear(
         "cov_weight": float(cov_weight),
         "gamma": float(gamma),
         "global_input_scale": float(scale.detach().cpu()),
-        "n_aligned_groups": int(len(groups)),
+        "n_aligned_groups": int(n_groups),
+        "n_aligned_rows_used": int(x.shape[0]),
         "history": history,
     }
