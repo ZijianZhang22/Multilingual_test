@@ -20,12 +20,12 @@ ATLAS_DIR="${ATLAS_DIR:-mechanism_runs/functional_representation_atlas}"
 TRAIN_FRACTION="${TRAIN_FRACTION:-0.20}"
 LAMBDAS="${LAMBDAS:-5 20 50}"
 EVAL_MAX_BLOCKS="${EVAL_MAX_BLOCKS:-128}"
-PACKAGE_NAME="${PACKAGE_NAME:-retention_subspace_first_four_steps.tar.gz}"
+PACKAGE_NAME="${PACKAGE_NAME:-retention_subspace_steps1to5.tar.gz}"
 
 mkdir -p "$LOG_DIR"
 
 echo "============================================================"
-echo "Retention-Subspace Mechanism Pipeline: Steps 1-4"
+echo "Retention-Subspace Mechanism Pipeline: Steps 1-5"
 echo "model            = $MODEL_NAME"
 echo "train_fraction   = $TRAIN_FRACTION"
 echo "lambdas          = $LAMBDAS"
@@ -76,7 +76,7 @@ test -f "$ANCHOR/config.json"
 # Step 1: normalized layer/lambda sweep, freeze0 only.
 # ----------------------------------------------------------------------
 echo
-echo "===== [1/4] Layer x lambda Pareto sweep ====="
+echo "===== [1/5] Layer x lambda Pareto sweep ====="
 if [[ -f "$STEP1_DIR/results.csv" && -f "$STEP1_DIR/checkpoints/full_ft/config.json" ]]; then
   echo "Step 1 already complete; skipping."
 else
@@ -91,7 +91,7 @@ test -f "$ADAPTED/config.json"
 # Step 2: build Layer-20 candidate mechanism subspaces.
 # ----------------------------------------------------------------------
 echo
-echo "===== [2/4] Build Layer-20 subspaces ====="
+echo "===== [2/5] Build Layer-20 subspaces ====="
 if [[ -f "$STEP2_DIR/layer20_subspaces.pt" ]]; then
   echo "Step 2 already complete; skipping."
 else
@@ -105,7 +105,7 @@ test -f "$SUBSPACE_FILE"
 # Step 3: causal removal with matched-rank random controls.
 # ----------------------------------------------------------------------
 echo
-echo "===== [3/4] Matched-rank causal removal ====="
+echo "===== [3/5] Matched-rank causal removal ====="
 if [[ -f "$STEP3_DIR/matched_random_comparison.csv" ]]; then
   echo "Step 3 already complete; skipping."
 else
@@ -116,7 +116,7 @@ fi
 # Step 4: causal rescue along the same real/random subspaces.
 # ----------------------------------------------------------------------
 echo
-echo "===== [4/4] Anchor-direction causal rescue ====="
+echo "===== [4/5] Anchor-direction causal rescue ====="
 if [[ -f "$STEP4_DIR/matched_random_rescue_comparison.csv" ]]; then
   echo "Step 4 already complete; skipping."
 else
@@ -127,7 +127,7 @@ fi
 # Step 5: functional representation atlas across depth.
 # ----------------------------------------------------------------------
 echo
-echo "===== [5] Functional representation atlas ====="
+echo "===== [5/5] Functional representation atlas ====="
 if [[ -f "$ATLAS_DIR/functional_subspace_profile.csv" ]]; then
   echo "Functional atlas already complete; skipping."
 else
@@ -159,6 +159,7 @@ s1 = Path("$STEP1_DIR")
 s2 = Path("$STEP2_DIR")
 s3 = Path("$STEP3_DIR")
 s4 = Path("$STEP4_DIR")
+s5 = Path("$ATLAS_DIR")
 
 summary = {}
 
@@ -197,6 +198,36 @@ summary["step4_alpha1"] = [
     for r in rescue if abs(float(r["alpha"]) - 1.0) < 1e-12
 ]
 
+# Step 5 compact atlas summary. Keep the full CSVs in the package below.
+layer_metrics = list(csv.DictReader((s5 / "layer_representation_metrics.csv").open()))
+summary["step5_layer_metrics"] = [
+    {
+        "layer": int(r["layer"]),
+        "relative_l2_drift": float(r["relative_l2_drift"]),
+        "linear_cka": float(r["linear_cka"]),
+        "alignment_discrepancy_symmetric": float(r["alignment_discrepancy_symmetric"]),
+    }
+    for r in layer_metrics
+]
+
+profile = list(csv.DictReader((s5 / "functional_subspace_profile.csv").open()))
+summary["step5_functional_profile"] = [
+    {
+        "layer": int(r["layer"]),
+        "subspace": r["subspace"],
+        "rank": int(r["rank"]),
+        "projected_drift_fraction": float(r["projected_drift_fraction"]),
+        "projected_drift_enrichment": float(r["projected_drift_enrichment"]),
+        "subspace_stability_overlap": (
+            None if r["subspace_stability_overlap"].lower() == "nan"
+            else float(r["subspace_stability_overlap"])
+        ),
+        "anchor_language_probe_accuracy": float(r["anchor_language_probe_accuracy"]),
+        "anchor_task_probe_accuracy": float(r["anchor_task_probe_accuracy"]),
+    }
+    for r in profile
+]
+
 Path("mechanism_runs/first_four_steps_summary.json").write_text(
     json.dumps(summary, indent=2)
 )
@@ -207,11 +238,29 @@ PY
 # Package compact results; intentionally omit checkpoints and feature tensors.
 # ----------------------------------------------------------------------
 rm -f "$PACKAGE_NAME"
-tar -czf "$PACKAGE_NAME"   "$STEP1_DIR/results.csv"   "$STEP1_DIR/manifest.json"   "$STEP2_DIR/summary.json"   "$STEP2_DIR/layer20_subspaces.pt"   "$STEP3_DIR/removal_results.csv"   "$STEP3_DIR/matched_random_comparison.csv"   "$STEP3_DIR/manifest.json"   "$STEP4_DIR/rescue_results.csv"   "$STEP4_DIR/matched_random_rescue_comparison.csv"   "$STEP4_DIR/manifest.json"   mechanism_runs/first_four_steps_summary.json   "$LOG_DIR"
+tar -czf "$PACKAGE_NAME" \
+  "$STEP1_DIR/results.csv" \
+  "$STEP1_DIR/manifest.json" \
+  "$STEP2_DIR/summary.json" \
+  "$STEP2_DIR/layer20_subspaces.pt" \
+  "$STEP3_DIR/removal_results.csv" \
+  "$STEP3_DIR/matched_random_comparison.csv" \
+  "$STEP3_DIR/manifest.json" \
+  "$STEP4_DIR/rescue_results.csv" \
+  "$STEP4_DIR/matched_random_rescue_comparison.csv" \
+  "$STEP4_DIR/manifest.json" \
+  "$ATLAS_DIR/layer_representation_metrics.csv" \
+  "$ATLAS_DIR/functional_subspace_profile.csv" \
+  "$ATLAS_DIR/subspace_overlap_by_layer.csv" \
+  "$ATLAS_DIR/atlas.json" \
+  "$ATLAS_DIR/manifest.json" \
+  "$ATLAS_DIR/bases" \
+  mechanism_runs/first_four_steps_summary.json \
+  "$LOG_DIR"
 
 echo
 echo "============================================================"
-echo "ALL FOUR STEPS COMPLETE"
+echo "ALL FIVE STEPS COMPLETE"
 echo "Step 1: $STEP1_DIR/results.csv"
 echo "Step 2: $STEP2_DIR/summary.json"
 echo "Step 3: $STEP3_DIR/matched_random_comparison.csv"
