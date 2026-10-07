@@ -103,6 +103,8 @@ def train(
     tokens = 0
     total_lm = 0.0
     total_pres = 0.0
+    total_raw_pres = 0.0
+    total_anchor_energy = 0.0
     n_batches = 0
     loader = make_loader(blocks, args.micro_batch)
 
@@ -135,8 +137,15 @@ def train(
 
         if use_preservation:
             delta = out.hidden_states[preserve_layer].float() - h_anchor
-            pres_loss = delta.pow(2).mean()
+            raw_pres_loss = delta.pow(2).mean()
+            anchor_energy = h_anchor.pow(2).mean().detach()
+            if args.preservation_normalization == "anchor_energy":
+                pres_loss = raw_pres_loss / (anchor_energy + args.normalization_eps)
+            else:
+                pres_loss = raw_pres_loss
         else:
+            raw_pres_loss = torch.zeros((), device=device, dtype=torch.float32)
+            anchor_energy = torch.zeros((), device=device, dtype=torch.float32)
             pres_loss = torch.zeros((), device=device, dtype=torch.float32)
 
         total_loss = lm_loss + args.lambda_preserve * pres_loss
@@ -144,6 +153,8 @@ def train(
 
         total_lm += float(lm_loss.detach())
         total_pres += float(pres_loss.detach())
+        total_raw_pres += float(raw_pres_loss.detach())
+        total_anchor_energy += float(anchor_energy.detach())
         n_batches += 1
         tokens += x.numel()
 
@@ -158,6 +169,8 @@ def train(
         "tokens_seen": tokens,
         "mean_train_lm_loss": total_lm / max(n_batches, 1),
         "mean_preserve_loss": total_pres / max(n_batches, 1),
+        "mean_raw_preserve_mse": total_raw_pres / max(n_batches, 1),
+        "mean_anchor_energy": total_anchor_energy / max(n_batches, 1),
     }
 
 
@@ -178,11 +191,18 @@ def main():
         type=float,
         default=3.0,
         help=(
-            "Weight on full hidden-state preservation at the targeted layer: "
-            "L = L_new + lambda * MSE(h_current, h_anchor). "
-            "Set 0 to recover the original freezing-only pilot."
+            "Weight on the preservation term. With --preservation_normalization none: "
+            "L_pres=MSE(h_current,h_anchor). With anchor_energy: "
+            "L_pres=MSE(h_current,h_anchor)/(mean(h_anchor^2)+eps)."
         ),
     )
+    p.add_argument(
+        "--preservation_normalization",
+        choices=["none", "anchor_energy"],
+        default="none",
+        help="Normalize hidden-state preservation by anchor activation energy for fairer cross-layer comparison.",
+    )
+    p.add_argument("--normalization_eps", type=float, default=1e-8)
     p.add_argument("--train_fraction", type=float, default=0.20)
     p.add_argument("--eval_max_blocks", type=int, default=128)
     p.add_argument("--seed", type=int, default=0)
@@ -242,15 +262,17 @@ def main():
     a_new = evaluate(anchor, new_val, args.eval_batch, device, bf16)
     print(
         f"[anchor] old={a_old:.6f} new={a_new:.6f}; "
-        f"train_blocks={len(new_train)} lambda={args.lambda_preserve:g}"
+        f"train_blocks={len(new_train)} lambda={args.lambda_preserve:g} "
+        f"normalization={args.preservation_normalization}"
     )
 
     jobs = []
     if not args.skip_full_ft:
         jobs.append(("full_ft", None, 0.0))
     lam_tag = lambda_tag(args.lambda_preserve)
+    norm_tag = "_norm" if args.preservation_normalization == "anchor_energy" else ""
     jobs += [
-        (f"layer{l}_freeze{int(r*100)}_lam{lam_tag}", l, r)
+        (f"layer{l}_freeze{int(r*100)}_lam{lam_tag}{norm_tag}", l, r)
         for l in args.layers
         for r in args.freeze_ratios
     ]
@@ -294,7 +316,9 @@ def main():
         print(
             f"forget={forget:+.6f} new_gain={gain:+.6f} "
             f"train_lm={stats['mean_train_lm_loss']:.6f} "
-            f"pres={stats['mean_preserve_loss']:.6f}"
+            f"pres={stats['mean_preserve_loss']:.6f} "
+            f"raw_pres={stats['mean_raw_preserve_mse']:.6f} "
+            f"anchor_E={stats['mean_anchor_energy']:.6f}"
         )
 
         if args.save_checkpoints:
@@ -309,13 +333,19 @@ def main():
             "freeze_ratio_requested": ratio,
             "freeze_ratio_actual": actual,
             "lambda_preserve": lam_this,
-            "preservation_mode": "none" if layer_no is None or lam_this == 0 else "full_hidden_mse",
+            "preservation_mode": (
+                "none" if layer_no is None or lam_this == 0
+                else ("relative_hidden_mse" if args.preservation_normalization == "anchor_energy" else "full_hidden_mse")
+            ),
+            "preservation_normalization": args.preservation_normalization,
             "layer_parameter_count": layer_params,
             "train_fraction": args.train_fraction,
             "train_blocks": len(new_train),
             "tokens_seen": stats["tokens_seen"],
             "mean_train_lm_loss": stats["mean_train_lm_loss"],
             "mean_preserve_loss": stats["mean_preserve_loss"],
+            "mean_raw_preserve_mse": stats["mean_raw_preserve_mse"],
+            "mean_anchor_energy": stats["mean_anchor_energy"],
             "anchor_old_loss": a_old,
             "anchor_new_loss": a_new,
             "post_old_loss": p_old,
