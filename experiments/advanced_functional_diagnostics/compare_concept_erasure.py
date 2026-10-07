@@ -142,6 +142,23 @@ def fresh_probe_accuracy(z, labels, train_idx, test_idx, n_classes, seed):
         return float((pred == labels[te]).float().mean().cpu())
 
 
+def factorize_removed_map(a, tol=1e-6):
+    """Factor (I-A)^T as left @ right.T for cheap tokenwise erasure."""
+    rmap = torch.eye(a.shape[0], dtype=a.dtype) - a
+    u, s, vh = torch.linalg.svd(rmap, full_matrices=False)
+    keep = s > tol * s.max().clamp_min(1e-30)
+    if not bool(keep.any()):
+        return (
+            torch.empty(a.shape[0], 0),
+            torch.empty(a.shape[0], 0),
+        )
+    root = torch.sqrt(s[keep])
+    # R^T = V S U^T = (V sqrt(S)) (U sqrt(S))^T
+    left = vh[keep].T * root.unsqueeze(0)
+    right = u[:, keep] * root.unsqueeze(0)
+    return left, right
+
+
 @torch.no_grad()
 def evaluate_with_erasure(
     model,
@@ -156,13 +173,16 @@ def evaluate_with_erasure(
     strength,
 ):
     layer = get_layers(model)[layer_no - 1]
-    a = a.to(device=device, dtype=torch.float32)
+    left, right = factorize_removed_map(a)
+    left = left.to(device=device, dtype=torch.float32)
+    right = right.to(device=device, dtype=torch.float32)
     b = b.to(device=device, dtype=torch.float32)
 
     def hook(_module, _inputs, output):
         h = output[0] if isinstance(output, tuple) else output
         hf = h.float()
-        erased = hf @ a.T + b.view(1, 1, -1)
+        removed = (hf @ left) @ right.T
+        erased = hf - removed + b.view(1, 1, -1)
         new_h = hf + strength * (erased - hf)
         if isinstance(output, tuple):
             return (new_h.to(h.dtype), *output[1:])
