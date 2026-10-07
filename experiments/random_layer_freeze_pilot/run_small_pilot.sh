@@ -23,4 +23,5 @@ python experiments/random_layer_freeze_pilot/run_pilot.py \
   --grad_accum 4 \
   --eval_batch 8 \
   --out_dir "$OUT_DIR" \
+  --save_checkpoints \
   2>&1 | tee random_layer_freeze_pilot.log
