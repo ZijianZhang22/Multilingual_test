@@ -80,9 +80,9 @@ def collect_gradient_gram(
 ):
     model = load_model(checkpoint, device, use_bf16)
     model.train()
-    for p in model.parameters():
-        p.requires_grad_(False)
-
+    # Keep parameter requires_grad enabled so the forward activations carry an
+    # autograd graph. We never step an optimizer; parameter gradients are
+    # discarded after each diagnostic batch.
     transformer_layers = get_layers(model)
     stats = {}
     handles = []
