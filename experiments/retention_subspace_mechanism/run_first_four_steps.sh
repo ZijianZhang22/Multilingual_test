@@ -10,10 +10,10 @@ ANCHOR_REAL="${ANCHOR_REAL:-${ANCHOR_ROOT}/en/stage1_en}"
 ANCHOR="${ANCHOR:-${ANCHOR_ROOT}/en__zh/stage1_en}"
 
 STEP1_DIR="${STEP1_DIR:-mechanism_runs/step1_layer_lambda_sweep}"
-STEP2_DIR="${STEP2_DIR:-mechanism_runs/step2_layer20_subspaces}"
+STEP2_DIR="${STEP2_DIR:-mechanism_runs/step2_layer20_subspaces_v2}"
 SUBSPACE_LANGUAGES="${SUBSPACE_LANGUAGES:-en zh fr de es}"
-STEP3_DIR="${STEP3_DIR:-mechanism_runs/step3_causal_removal}"
-STEP4_DIR="${STEP4_DIR:-mechanism_runs/step4_causal_rescue}"
+STEP3_DIR="${STEP3_DIR:-mechanism_runs/step3_causal_removal_v2}"
+STEP4_DIR="${STEP4_DIR:-mechanism_runs/step4_causal_rescue_v2}"
 LOG_DIR="${LOG_DIR:-mechanism_runs/logs_first_four_steps}"
 
 TRAIN_FRACTION="${TRAIN_FRACTION:-0.20}"
