@@ -116,6 +116,14 @@ def main():
     layer_no = int(payload["layer"])
     center = payload["center"].float()
     subspaces = {k: v.float() for k, v in payload["subspaces"].items()}
+    real_subspaces = payload.get(
+        "real_subspaces",
+        [k for k in subspaces if not k.startswith("random_")],
+    )
+    matched_controls = payload.get(
+        "matched_random_controls",
+        {k: f"random_{k}" for k in real_subspaces},
+    )
 
     val = {}
     for lang in args.languages:
@@ -157,10 +165,13 @@ def main():
 
         for name, q in subspaces.items():
             match = ""
-            if name in {"language", "transfer", "drift"}:
-                match = f"random_{name}"
-            elif name.startswith("random_"):
-                match = name.removeprefix("random_")
+            if name in matched_controls:
+                match = matched_controls[name]
+            elif name in matched_controls.values():
+                match = next(
+                    real for real, ctrl in matched_controls.items()
+                    if ctrl == name
+                )
 
             for strength in args.strengths:
                 for lang in args.languages:
@@ -209,8 +220,8 @@ def main():
     # Pair every real subspace against its matched-rank random control.
     paired = []
     for state in args.states:
-        for real in ["language", "transfer", "drift"]:
-            random_name = f"random_{real}"
+        for real in real_subspaces:
+            random_name = matched_controls[real]
             for strength in args.strengths:
                 for lang in args.languages:
                     rr = next(
@@ -259,6 +270,8 @@ def main():
         "subspace_file": args.subspace_file,
         "languages": args.languages,
         "strengths": args.strengths,
+        "real_subspaces": real_subspaces,
+        "matched_random_controls": matched_controls,
         "interpretation": (
             "Positive causal_excess_loss_vs_random means removing the real "
             "subspace hurts more than removing an equally ranked random subspace."
