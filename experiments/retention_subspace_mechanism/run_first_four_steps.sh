@@ -11,6 +11,7 @@ ANCHOR="${ANCHOR:-${ANCHOR_ROOT}/en__zh/stage1_en}"
 
 STEP1_DIR="${STEP1_DIR:-mechanism_runs/step1_layer_lambda_sweep}"
 STEP2_DIR="${STEP2_DIR:-mechanism_runs/step2_layer20_subspaces}"
+SUBSPACE_LANGUAGES="${SUBSPACE_LANGUAGES:-en zh fr de es}"
 STEP3_DIR="${STEP3_DIR:-mechanism_runs/step3_causal_removal}"
 STEP4_DIR="${STEP4_DIR:-mechanism_runs/step4_causal_rescue}"
 LOG_DIR="${LOG_DIR:-mechanism_runs/logs_first_four_steps}"
@@ -28,6 +29,7 @@ echo "model            = $MODEL_NAME"
 echo "train_fraction   = $TRAIN_FRACTION"
 echo "lambdas          = $LAMBDAS"
 echo "eval_max_blocks  = $EVAL_MAX_BLOCKS"
+echo "subspace langs   = $SUBSPACE_LANGUAGES"
 echo "============================================================"
 
 # ----------------------------------------------------------------------
@@ -92,7 +94,7 @@ echo "===== [2/4] Build Layer-20 subspaces ====="
 if [[ -f "$STEP2_DIR/layer20_subspaces.pt" ]]; then
   echo "Step 2 already complete; skipping."
 else
-  python experiments/retention_subspace_mechanism/build_step2_layer20_subspaces.py     --anchor_checkpoint "$ANCHOR"     --adapted_checkpoint "$ADAPTED"     --languages en zh     --layer 20     --transfer_rank 64     --drift_rank 64     --inlp_iters 32     --out_dir "$STEP2_DIR"     2>&1 | tee "$LOG_DIR/02_build_subspaces.log"
+  python experiments/retention_subspace_mechanism/build_step2_layer20_subspaces.py     --anchor_checkpoint "$ANCHOR"     --adapted_checkpoint "$ADAPTED"     --languages $SUBSPACE_LANGUAGES     --layer 20     --rank 64     --inlp_iters 32     --isr_cov_class 0     --vicreg_epochs 300     --out_dir "$STEP2_DIR"     2>&1 | tee "$LOG_DIR/02_build_subspaces.log"
 fi
 
 SUBSPACE_FILE="$STEP2_DIR/layer20_subspaces.pt"
