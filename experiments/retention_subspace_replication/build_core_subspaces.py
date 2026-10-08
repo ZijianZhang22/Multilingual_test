@@ -53,7 +53,7 @@ def main():
     ap.add_argument("--layer",type=int,required=True); ap.add_argument("--rank",type=int,default=64)
     ap.add_argument("--inlp_iters",type=int,default=32)
     ap.add_argument("--probe_train_per_lang",type=int,default=1200); ap.add_argument("--probe_test_per_lang",type=int,default=1200)
-    ap.add_argument("--aligned_examples",type=int,default=2000); ap.add_argument("--extract_batch",type=int,default=4)
+    ap.add_argument("--aligned_examples",type=int,default=2000); ap.add_argument("--extract_batch",type=int,default=4)\n    ap.add_argument("--pool", choices=["mean","last"], default="mean")
     ap.add_argument("--isr_cov_class",type=int,default=0)
     ap.add_argument("--vicreg_epochs",type=int,default=300)
     ap.add_argument("--vicreg_lr",type=float,default=3e-2)
@@ -67,7 +67,7 @@ def main():
     maybe(probe,[sys.executable,INV/"prepare_xnli.py","--languages",*args.languages,"--train_per_lang",args.probe_train_per_lang,"--test_per_lang",args.probe_test_per_lang,"--seed",2026,"--out_file",probe],args.force)
     maybe(aligned,[sys.executable,INV/"prepare_aligned_xnli.py","--languages",*args.languages,"--split","validation","--n_examples",args.aligned_examples,"--seed",2026,"--out_file",aligned],args.force)
     for ckpt,data_file,out_file in [(args.anchor_checkpoint,probe,anchor_probe),(args.adapted_checkpoint,probe,adapted_probe),(args.anchor_checkpoint,aligned,anchor_aligned)]:
-        maybe(out_file,[sys.executable,INV/"extract_hidden.py","--checkpoint",ckpt,"--data_file",data_file,"--out_file",out_file,"--layers",args.layer,"--batch_size",args.extract_batch],args.force)
+        maybe(out_file,[sys.executable,INV/"extract_hidden.py","--checkpoint",ckpt,"--data_file",data_file,"--out_file",out_file,"--layers",args.layer,"--batch_size",args.extract_batch,"--pool",args.pool],args.force)
     maybe(lang_file,[sys.executable,INV/"fit_inlp_language_subspace.py","--features_file",anchor_probe,"--out_file",lang_file,"--layer",args.layer,"--iters",args.inlp_iters,"--seed",0],args.force)
     maybe(transfer_file,[sys.executable,INV/"fit_transferable_subspace.py","--features_file",anchor_aligned,"--aligned_data_file",aligned,"--language_subspace_file",lang_file,"--out_file",transfer_file,"--layer",args.layer,"--rank",args.rank],args.force)
     probe_payload=torch.load(anchor_probe,map_location="cpu")
@@ -101,7 +101,7 @@ def main():
         for b in names[i:]:
             overlaps[f"{a}__{b}"]=overlap_stats(real[a],real[b])
     artifact={
-        "layer":args.layer,"hidden_dim":dim,"anchor_checkpoint":args.anchor_checkpoint,"adapted_checkpoint":args.adapted_checkpoint,
+        "layer":args.layer,"hidden_dim":dim,"pool":args.pool,"anchor_checkpoint":args.anchor_checkpoint,"adapted_checkpoint":args.adapted_checkpoint,
         "fit_languages":args.languages,"center":center,"subspaces":subspaces,"real_subspaces":names,
         "matched_random_controls":controls,"ranks":{k:int(v.shape[1]) for k,v in subspaces.items()},
         "drift_mean_delta_l2":float(delta.norm(dim=1).mean()),"drift_explained_fraction_within_rank":drift_ev,
@@ -109,7 +109,7 @@ def main():
         "isr_multiclass_spurious_basis":q_isr_spurious,"vicreg_metadata":vicreg_meta,"overlaps":overlaps
     }
     out_file=out/"core_subspaces.pt"; torch.save(artifact,out_file)
-    summary={"layer":args.layer,"hidden_dim":dim,"ranks":artifact["ranks"],"drift_mean_delta_l2":artifact["drift_mean_delta_l2"],"overlaps":overlaps,"isr_cov_metadata":isr_cov_meta,"isr_multiclass_metadata":isr_multi_meta,"vicreg_metadata":vicreg_meta}
+    summary={"layer":args.layer,"hidden_dim":dim,"pool":args.pool,"ranks":artifact["ranks"],"drift_mean_delta_l2":artifact["drift_mean_delta_l2"],"overlaps":overlaps,"isr_cov_metadata":isr_cov_meta,"isr_multiclass_metadata":isr_multi_meta,"vicreg_metadata":vicreg_meta}
     (out/"summary.json").write_text(json.dumps(summary,indent=2))
     print(f"Saved: {out_file}",flush=True)
 if __name__=="__main__": main()
