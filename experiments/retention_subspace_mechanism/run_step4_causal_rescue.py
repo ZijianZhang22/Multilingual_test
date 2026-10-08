@@ -32,6 +32,7 @@ def evaluate_rescue(
     layer_no,
     basis,
     alpha,
+    scale=1.0,
 ):
     adapted.eval()
     anchor.eval()
@@ -64,9 +65,10 @@ def evaluate_rescue(
 
         delta = ha.float() - h.float()
         projected = (delta @ q) @ q.T
-        rescued = h.float() + alpha * projected
+        perturb = alpha * scale * projected
+        rescued = h.float() + perturb
 
-        stats["projected_delta_sq"] += float(projected.pow(2).sum())
+        stats["projected_delta_sq"] += float(perturb.pow(2).sum())
         stats["full_delta_sq"] += float(delta.pow(2).sum())
         stats["n"] += delta.numel()
 
