@@ -1,0 +1,29 @@
+name: Literature measurement suite (CPU)
+
+on:
+  pull_request:
+    paths:
+      - "experiments/literature_measurements/**"
+      - "experiments/retention_subspace_replication/build_core_subspaces.py"
+      - ".github/workflows/literature-measurements-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  numerics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU torch
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Compile study scripts and replication builder
+        run: |
+          python -m compileall -q experiments/literature_measurements
+          python -m py_compile experiments/retention_subspace_replication/build_core_subspaces.py
+      - name: Run numerical regression tests
+        run: python -m unittest discover -s experiments/literature_measurements/tests -v
