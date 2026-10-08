@@ -85,7 +85,7 @@ def build_sweep_command(cfg, lr, sweep_root):
         sys.executable, SWEEP,
         "--model_name", cfg["model_name"],
         "--data_dir", cfg["data_dir"],
-        "--out_root", sweep_root,
+        "--out_root", cfg["out_root"],
         "--seed", cfg["seed"],
         "--old_language", cfg["old_language"],
         "--new_language", cfg["new_language"],
