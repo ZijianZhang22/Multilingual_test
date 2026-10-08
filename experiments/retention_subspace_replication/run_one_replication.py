@@ -69,7 +69,7 @@ def main():
         cmd=[sys.executable,ROOT/"experiments/retention_subspace_mechanism/run_step6_energy_matched_controls.py",
              "--anchor_checkpoint",anchor,"--adapted_checkpoint",adapted,"--subspace_file",subspace_file,
              "--data_dir",args.data_dir,"--old_language",args.old_language,"--new_language",args.new_language,
-             "--subspaces","drift","isr_multiclass","transfer","isr_cov","--strengths","0.25","0.5","1.0",
+             "--subspaces","drift","isr_multiclass","transfer","isr_cov","vicreg","--strengths","0.25","0.5","1.0",
              "--n_random",args.n_random,"--random_seed",7300+100*args.seed,
              "--eval_max_blocks",args.eval_max_blocks,"--eval_batch",args.eval_batch,"--out_dir",energy_dir]
         run(cmd,log)
