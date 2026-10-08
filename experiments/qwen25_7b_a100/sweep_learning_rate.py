@@ -151,8 +151,8 @@ def main():
 
     import torch
     from train_7b_a100 import (
-        complete_checkpoint, load_model, measure, memory_report,
-        save_model, train_stage,
+        complete_checkpoint, ensure_checkpoint_space, load_model,
+        measure, memory_report, save_model, train_stage,
     )
     from transformers import AutoTokenizer
     import sys
@@ -239,6 +239,14 @@ def main():
             print(f"[resume] skip {tag}", flush=True)
             save_table(output, args.lrs)
             continue
+        if wants_checkpoint:
+            if checkpoint_dir.exists() and any(checkpoint_dir.iterdir()):
+                raise FileExistsError(
+                    f"An incomplete or orphaned checkpoint exists: {checkpoint_dir}. "
+                    "Verify it contains no usable complete checkpoint, then "
+                    "delete ONLY that incomplete adapted/ directory before retrying."
+                )
+            ensure_checkpoint_space(anchor, checkpoint_dir)
         set_seed(args.seed)
         model = load_model(anchor)
         trainargs = SimpleNamespace(**vars(args))
@@ -247,9 +255,6 @@ def main():
         stats = train_stage(model, new_train, trainargs)
         losses = measure(model, old_val, new_val, args.eval_batch)
         checkpoint_saved = False
-        if wants_checkpoint:
-            save_model(model, tokenizer, checkpoint_dir)
-            checkpoint_saved = True
         row = {
             "learning_rate": lr,
             "seed": args.seed,
@@ -265,7 +270,12 @@ def main():
             "zh_optimizer_steps": stats["optimizer_steps"],
             "checkpoint_saved": checkpoint_saved,
         }
+        # Preserve completed numerical results even if checkpoint save fails.
         safe_write_json(metric_path, row)
+        if wants_checkpoint:
+            save_model(model, tokenizer, checkpoint_dir)
+            row["checkpoint_saved"] = True
+            safe_write_json(metric_path, row)
         print(f"[result] LR={lr:.1e} forgetting={row['forgetting_loss_delta']:+.6f} "
               f"ZH_gain={row['new_language_gain']:+.6f}", flush=True)
         memory_report(f"{tag}")
