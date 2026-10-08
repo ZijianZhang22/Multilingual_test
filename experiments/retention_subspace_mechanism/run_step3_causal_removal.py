@@ -32,6 +32,7 @@ def evaluate_removed(
     basis,
     center,
     strength,
+    scale=1.0,
 ):
     layer = get_layers(model)[layer_no - 1]
     q = basis.to(device=device, dtype=torch.float32)
@@ -44,9 +45,10 @@ def evaluate_removed(
         hf = h.float()
         centered = hf - c.view(1, 1, -1)
         projected = (centered @ q) @ q.T
-        new_h = hf - strength * projected
+        perturb = strength * scale * projected
+        new_h = hf - perturb
 
-        stats["removed_sq"] += float((strength * projected).pow(2).sum())
+        stats["removed_sq"] += float(perturb.pow(2).sum())
         stats["centered_sq"] += float(centered.pow(2).sum())
         stats["n"] += centered.numel()
 
