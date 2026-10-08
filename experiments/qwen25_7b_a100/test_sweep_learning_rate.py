@@ -22,8 +22,8 @@ class SweepCLI(unittest.TestCase):
     def test_dry_run_default(self):
         p = self.call("--dry_run")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(p.stdout.count("reload same EN anchor"), 3)
-        for lr in ["1e-05", "2e-05", "4e-05"]:
+        self.assertEqual(p.stdout.count("reload same EN anchor"), 5)
+        for lr in ["1e-05", "2e-05", "4e-05", "5e-05", "6e-05"]:
             self.assertIn(f"lr={lr}", p.stdout)
 
     def test_invalid_values(self):
@@ -40,6 +40,17 @@ class SweepCLI(unittest.TestCase):
         p = self.call("--dry_run", "--export_lr", "2e-5")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("export selected LR=2e-05 only", p.stdout)
+
+    def test_extend_existing_lr_grid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            original = {"lrs": [1e-5, 2e-5, 4e-5], "seed": 0}
+            module.verify_or_extend_config(path, original)
+            extended = {"lrs": [1e-5, 2e-5, 4e-5, 5e-5, 6e-5], "seed": 0}
+            module.verify_or_extend_config(path, extended)
+            self.assertEqual(json.loads(path.read_text())["lrs"], extended["lrs"])
+            with self.assertRaises(ValueError):
+                module.verify_or_extend_config(path, {"lrs": extended["lrs"], "seed": 1})
 
     def test_csv_aggregation(self):
         with tempfile.TemporaryDirectory() as tmp:
