@@ -174,3 +174,41 @@ and `.../lr_2e-05/`, each with `subspaces/`,
 **Storage and compute:** each exported 7B adapted checkpoint needs ~15 GB;
 subspace extraction and Step 6/7 may be substantially slower than training.
 This has not yet been GPU-validated on an A100.
+
+## Brand-new Pod: no previous checkpoints or Wiki data
+
+Use the new bootstrap runner to generate Wiki EN/ZH blocks (if absent),
+train the EN anchor from **Qwen2.5-7B base** at 2e-5, train 100% ZH at 4e-5,
+save both BF16 checkpoints, fit subspaces and run Step 7.
+
+```bash
+cd /workspace/Multilingual_test
+git checkout feature/qwen25-7b-a100-8bit
+git pull origin feature/qwen25-7b-a100-8bit
+pip install -r requirements.txt -r experiments/qwen25_7b_a100/requirements-7b.txt
+
+# Check available space before downloading (~60GB reported):
+df -h /workspace
+python experiments/qwen25_7b_a100/run_fresh_fullzh.py --dry_run
+
+# Recommended one-LR starting run to conserve disk:
+nohup python -u experiments/qwen25_7b_a100/run_fresh_fullzh.py \
+  --lrs 4e-5 --through step7 \
+  > qwen7b_fresh_fullzh.log 2>&1 &
+
+tail -f qwen7b_fresh_fullzh.log
+```
+
+After checking remaining disk, optional 2e-5 comparison:
+
+```bash
+nohup python -u experiments/qwen25_7b_a100/run_fresh_fullzh.py \
+  --lrs 4e-5 2e-5 --through step7 \
+  > qwen7b_fresh_comparison.log 2>&1 &
+```
+
+The runner preserves the EN anchor and completed LR-4e-5 results on restart.
+It never automatically deletes checkpoint directories. **Do not assume 60GB
+total volume is sufficient**: model downloads/cache, one EN checkpoint, one
+adapted checkpoint, and future analysis/features must fit. Check `df -h`
+before including the second LR.
