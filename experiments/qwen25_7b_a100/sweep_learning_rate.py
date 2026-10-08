@@ -32,6 +32,31 @@ def safe_write_json(path: Path, payload):
     tmp.replace(path)
 
 
+def verify_or_extend_config(config_path: Path, config: dict):
+    """Allow new LR values to be appended without retraining the same anchor.
+
+    Every non-LR hyperparameter must be identical. Previously scheduled LRs
+    must remain present, so existing metrics stay part of the same experiment.
+    """
+    if not config_path.is_file():
+        safe_write_json(config_path, config)
+        return
+    previous = json.loads(config_path.read_text())
+    previous_lrs = previous.get("lrs", [])
+    other_changed = [
+        key for key in set(previous) | set(config)
+        if key != "lrs" and previous.get(key) != config.get(key)
+    ]
+    if other_changed or not set(previous_lrs).issubset(set(config["lrs"])):
+        raise ValueError(
+            "Existing sweep uses incompatible settings; "
+            f"changed={sorted(other_changed)}; choose a new --out_root."
+        )
+    if previous_lrs != config["lrs"]:
+        safe_write_json(config_path, config)
+        print(f"[resume] extended LR grid: {previous_lrs} -> {config['lrs']}", flush=True)
+
+
 def save_table(out_dir: Path, lrs):
     rows = []
     for lr in lrs:
@@ -68,7 +93,7 @@ def build_parser():
     ap.add_argument("--old_language", default="en")
     ap.add_argument("--new_language", default="zh")
     ap.add_argument("--lrs", nargs="+", type=positive_float,
-                    default=[1e-5, 2e-5, 4e-5])
+                    default=[1e-5, 2e-5, 4e-5, 5e-5, 6e-5])
     ap.add_argument("--anchor_lr", type=positive_float, default=2e-5,
                     help="EN anchor training LR, fixed across the sweep")
     ap.add_argument("--anchor_checkpoint", default=None,
@@ -141,13 +166,7 @@ def main():
         raise RuntimeError("Configured for approximately 80GB GPU RAM.")
     output.mkdir(parents=True, exist_ok=True)
     config_path = output / "sweep_config.json"
-    if config_path.is_file():
-        old = json.loads(config_path.read_text())
-        if old != config:
-            raise ValueError("Existing sweep uses a different configuration; "
-                             "choose a new --out_root (or consistent arguments).")
-    else:
-        safe_write_json(config_path, config)
+    verify_or_extend_config(config_path, config)
 
     data = Path(args.data_dir)
     old_train = load_blocks(data / f"{args.old_language}_train.pt")
