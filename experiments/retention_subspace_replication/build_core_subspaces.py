@@ -62,11 +62,11 @@ def main():
     out=Path(args.out_dir); data_dir=out/"data"; feat_dir=out/"features"
     data_dir.mkdir(parents=True,exist_ok=True); feat_dir.mkdir(parents=True,exist_ok=True)
     probe=data_dir/"xnli_probe.jsonl"; aligned=data_dir/"xnli_aligned.jsonl"
-    anchor_probe=feat_dir/"anchor_probe.pt"; adapted_probe=feat_dir/"adapted_probe.pt"; anchor_aligned=feat_dir/"anchor_aligned.pt"
+    anchor_probe=feat_dir/"anchor_probe.pt"; adapted_probe=feat_dir/"adapted_probe.pt"; anchor_aligned=feat_dir/"anchor_aligned.pt"; adapted_aligned=feat_dir/"adapted_aligned.pt"
     lang_file=out/"language_inlp.pt"; transfer_file=out/f"transfer_rank{args.rank}.pt"
     maybe(probe,[sys.executable,INV/"prepare_xnli.py","--languages",*args.languages,"--train_per_lang",args.probe_train_per_lang,"--test_per_lang",args.probe_test_per_lang,"--seed",2026,"--out_file",probe],args.force)
     maybe(aligned,[sys.executable,INV/"prepare_aligned_xnli.py","--languages",*args.languages,"--split","validation","--n_examples",args.aligned_examples,"--seed",2026,"--out_file",aligned],args.force)
-    for ckpt,data_file,out_file in [(args.anchor_checkpoint,probe,anchor_probe),(args.adapted_checkpoint,probe,adapted_probe),(args.anchor_checkpoint,aligned,anchor_aligned)]:
+    for ckpt,data_file,out_file in [(args.anchor_checkpoint,probe,anchor_probe),(args.adapted_checkpoint,probe,adapted_probe),(args.anchor_checkpoint,aligned,anchor_aligned),(args.adapted_checkpoint,aligned,adapted_aligned)]:
         maybe(out_file,[sys.executable,INV/"extract_hidden.py","--checkpoint",ckpt,"--data_file",data_file,"--out_file",out_file,"--layers",args.layer,"--batch_size",args.extract_batch,"--pool",args.pool],args.force)
     maybe(lang_file,[sys.executable,INV/"fit_inlp_language_subspace.py","--features_file",anchor_probe,"--out_file",lang_file,"--layer",args.layer,"--iters",args.inlp_iters,"--seed",0],args.force)
     maybe(transfer_file,[sys.executable,INV/"fit_transferable_subspace.py","--features_file",anchor_aligned,"--aligned_data_file",aligned,"--language_subspace_file",lang_file,"--out_file",transfer_file,"--layer",args.layer,"--rank",args.rank],args.force)
@@ -102,7 +102,7 @@ def main():
             overlaps[f"{a}__{b}"]=overlap_stats(real[a],real[b])
     artifact={
         "layer":args.layer,"hidden_dim":dim,"pool":args.pool,"anchor_checkpoint":args.anchor_checkpoint,"adapted_checkpoint":args.adapted_checkpoint,
-        "fit_languages":args.languages,"center":center,"subspaces":subspaces,"real_subspaces":names,
+        "fit_languages":args.languages,"center":center,"feature_files":{"anchor_probe":str(anchor_probe),"adapted_probe":str(adapted_probe),"anchor_aligned":str(anchor_aligned),"adapted_aligned":str(adapted_aligned)},"subspaces":subspaces,"real_subspaces":names,
         "matched_random_controls":controls,"ranks":{k:int(v.shape[1]) for k,v in subspaces.items()},
         "drift_mean_delta_l2":float(delta.norm(dim=1).mean()),"drift_explained_fraction_within_rank":drift_ev,
         "isr_cov_metadata":isr_cov_meta,"isr_multiclass_metadata":isr_multi_meta,
