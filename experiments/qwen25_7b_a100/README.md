@@ -80,3 +80,60 @@ replication_runs/qwen25_7b_a100/seed0/
 ~~~
 
 Relative layer defaults to round(28 * 20/24) = 23 (28 transformer layers); other model scales must use their own fitted projection bases. Before a long Step 6, check free VRAM during Step 7. Eight random directions are controls, not eight independent training replicates.
+
+
+## Learning rate vs forgetting (run **before** Step 6/7)
+
+The dedicated `sweep_learning_rate.py` trains an EN anchor **once**, then
+re-loads the identical anchor for each ZH learning rate. It reports both
+old-language forgetting and new-language gain on the same fixed validation
+blocks. The default LR sweep is 1e-5, 2e-5, 4e-5, with 20% of ZH training
+blocks and no unnecessary Step 6/7 interventions.
+
+```bash
+# Preview without downloading any weights:
+python experiments/qwen25_7b_a100/sweep_learning_rate.py --dry_run
+
+# Run sequential sweep on one A100 (does not save 3 adapted checkpoints):
+nohup python -u experiments/qwen25_7b_a100/sweep_learning_rate.py \
+  --lrs 1e-5 2e-5 4e-5 \
+  --new_train_fraction 0.2 \
+  > qwen7b_lr_sweep.log 2>&1 &
+
+tail -f qwen7b_lr_sweep.log
+cat replication_runs/qwen25_7b_a100_lr_sweep/seed0/lr_forgetting_summary.csv
+```
+
+By default the script stores one ~15 GB EN anchor, metrics for each learning
+rate, a manifest, and a CSV. It does **not** save the adapted checkpoints.
+To save all adapted checkpoints, use `--save_checkpoints` on the first run
+with a new output root (extra ~15 GB per LR).
+
+After the sweep, select the best LR **based on both EN forgetting and positive
+ZH gain**, then retrain/save just that checkpoint, e.g.:
+
+```bash
+python -u experiments/qwen25_7b_a100/sweep_learning_rate.py \
+  --lrs 1e-5 2e-5 4e-5 --new_train_fraction 0.2 --export_lr 4e-5
+```
+
+This reuses the saved anchor and produces
+`replication_runs/qwen25_7b_a100_lr_sweep/seed0/lr_4e-05/adapted/`.
+It can be used as an anchor/adapted checkpoint pair for later Step 6/7
+experiments, but the default `run_7b_a100.py` uses its own separate
+checkpoint paths and optimizer/learning rate; do not assume it will
+automatically ingest sweep checkpoints.
+
+If you use an **external anchor**, add `--anchor_checkpoint PATH` on the
+first invocation and verify its original optimizer, seed and token budget.
+Avoid selecting LR solely for maximum EN degradation: a negative ZH gain can
+indicate training damage rather than successful adaptation. If all EN
+forgetting is near zero, rerun with a separate output root and a stronger
+ZH training budget (e.g. `--new_train_fraction 1.0`) before considering
+larger learning rates.
+
+Run CPU-only tests:
+
+```bash
+python -m unittest discover -s experiments/qwen25_7b_a100 -p 'test_sweep_learning_rate.py' -v
+```
