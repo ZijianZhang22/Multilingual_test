@@ -87,7 +87,7 @@ Relative layer defaults to round(28 * 20/24) = 23 (28 transformer layers); other
 The dedicated `sweep_learning_rate.py` trains an EN anchor **once**, then
 re-loads the identical anchor for each ZH learning rate. It reports both
 old-language forgetting and new-language gain on the same fixed validation
-blocks. The default LR sweep is 1e-5, 2e-5, 4e-5, with 20% of ZH training
+blocks. The default LR sweep is 1e-5, 2e-5, 4e-5, 5e-5, 6e-5, with 20% of ZH training
 blocks and no unnecessary Step 6/7 interventions.
 
 ```bash
@@ -96,7 +96,7 @@ python experiments/qwen25_7b_a100/sweep_learning_rate.py --dry_run
 
 # Run sequential sweep on one A100 (does not save 3 adapted checkpoints):
 nohup python -u experiments/qwen25_7b_a100/sweep_learning_rate.py \
-  --lrs 1e-5 2e-5 4e-5 \
+  --lrs 1e-5 2e-5 4e-5 5e-5 6e-5 \
   --new_train_fraction 0.2 \
   > qwen7b_lr_sweep.log 2>&1 &
 
@@ -114,7 +114,7 @@ ZH gain**, then retrain/save just that checkpoint, e.g.:
 
 ```bash
 python -u experiments/qwen25_7b_a100/sweep_learning_rate.py \
-  --lrs 1e-5 2e-5 4e-5 --new_train_fraction 0.2 --export_lr 4e-5
+  --lrs 1e-5 2e-5 4e-5 5e-5 6e-5 --new_train_fraction 0.2 --export_lr 4e-5
 ```
 
 This reuses the saved anchor and produces
@@ -137,3 +137,5 @@ Run CPU-only tests:
 ```bash
 python -m unittest discover -s experiments/qwen25_7b_a100 -p 'test_sweep_learning_rate.py' -v
 ```
+
+The LR grid can be extended without retraining the EN anchor: existing run folders are skipped, and only newly added learning rates are evaluated. The same remaining hyperparameters must be kept unchanged.
