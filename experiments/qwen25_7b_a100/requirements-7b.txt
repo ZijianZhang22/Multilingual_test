@@ -1,0 +1,4 @@
+# Install root requirements.txt first; CUDA-enabled PyTorch required.
+bitsandbytes>=0.45.0
+accelerate>=1.0.0
+safetensors>=0.4.5
