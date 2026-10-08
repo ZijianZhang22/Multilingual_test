@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Build core replication subspaces: Transfer, Drift, ISR-Cov, ISR-Multiclass."""
+"""Build paper-main replication subspaces: Transfer, Drift, ISR-Cov, ISR-Multiclass, VICReg."""
 import argparse, json, subprocess, sys
 from pathlib import Path
 import torch
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 INV=ROOT/"invariance"
-from experiments.retention_subspace_mechanism.subspace_extractors import fit_isr_cov, fit_isr_multiclass_semantic, orthonormal_random
+from experiments.retention_subspace_mechanism.subspace_extractors import (
+    fit_isr_cov, fit_isr_multiclass_semantic, fit_vicreg_linear, orthonormal_random
+)
 
 def run(cmd):
     cmd=[str(x) for x in cmd]
@@ -18,6 +20,13 @@ def maybe(path,cmd,force=False):
     if path.exists() and not force:
         print(f"SKIP existing: {path}",flush=True); return
     run(cmd)
+
+def read_jsonl(path):
+    rows=[]
+    with Path(path).open("r",encoding="utf-8") as f:
+        for line in f:
+            if line.strip(): rows.append(json.loads(line))
+    return rows
 
 def fit_drift_basis(anchor_features,adapted_features,layer,rank):
     a=torch.load(anchor_features,map_location="cpu")
@@ -46,6 +55,8 @@ def main():
     ap.add_argument("--probe_train_per_lang",type=int,default=1200); ap.add_argument("--probe_test_per_lang",type=int,default=1200)
     ap.add_argument("--aligned_examples",type=int,default=2000); ap.add_argument("--extract_batch",type=int,default=4)
     ap.add_argument("--isr_cov_class",type=int,default=0)
+    ap.add_argument("--vicreg_epochs",type=int,default=300)
+    ap.add_argument("--vicreg_lr",type=float,default=3e-2)
     ap.add_argument("--out_dir",required=True); ap.add_argument("--force",action="store_true")
     args=ap.parse_args()
     out=Path(args.out_dir); data_dir=out/"data"; feat_dir=out/"features"
@@ -69,7 +80,17 @@ def main():
     labels_train=probe_payload["labels"][train_idx].long()
     q_isr_cov,isr_cov_meta=fit_isr_cov(x_train,langs_train,labels_train,rank=args.rank,class_label=args.isr_cov_class)
     q_isr_multi,q_isr_spurious,isr_multi_meta=fit_isr_multiclass_semantic(x_train,langs_train,labels_train,rank=args.rank)
-    real={"transfer":q_transfer,"drift":q_drift,"isr_cov":q_isr_cov,"isr_multiclass":q_isr_multi}
+    aligned_payload=torch.load(anchor_aligned,map_location="cpu")
+    x_aligned=aligned_payload["features"][str(args.layer)].float()
+    aligned_rows=read_jsonl(aligned)
+    pair_ids=[r["pair_id"] for r in aligned_rows]
+    if len(pair_ids)!=x_aligned.shape[0]:
+        raise ValueError("Aligned JSONL/features length mismatch for VICReg.")
+    q_vicreg,vicreg_meta=fit_vicreg_linear(
+        x_aligned,pair_ids,rank=args.rank,epochs=args.vicreg_epochs,
+        lr=args.vicreg_lr,seed=0
+    )
+    real={"transfer":q_transfer,"drift":q_drift,"isr_cov":q_isr_cov,"isr_multiclass":q_isr_multi,"vicreg":q_vicreg}
     subspaces={}; controls={}; dim=x_probe.shape[1]
     for i,(name,q) in enumerate(real.items()):
         subspaces[name]=q; rn=f"random_{name}"
@@ -85,10 +106,10 @@ def main():
         "matched_random_controls":controls,"ranks":{k:int(v.shape[1]) for k,v in subspaces.items()},
         "drift_mean_delta_l2":float(delta.norm(dim=1).mean()),"drift_explained_fraction_within_rank":drift_ev,
         "isr_cov_metadata":isr_cov_meta,"isr_multiclass_metadata":isr_multi_meta,
-        "isr_multiclass_spurious_basis":q_isr_spurious,"overlaps":overlaps
+        "isr_multiclass_spurious_basis":q_isr_spurious,"vicreg_metadata":vicreg_meta,"overlaps":overlaps
     }
     out_file=out/"core_subspaces.pt"; torch.save(artifact,out_file)
-    summary={"layer":args.layer,"hidden_dim":dim,"ranks":artifact["ranks"],"drift_mean_delta_l2":artifact["drift_mean_delta_l2"],"overlaps":overlaps,"isr_cov_metadata":isr_cov_meta,"isr_multiclass_metadata":isr_multi_meta}
+    summary={"layer":args.layer,"hidden_dim":dim,"ranks":artifact["ranks"],"drift_mean_delta_l2":artifact["drift_mean_delta_l2"],"overlaps":overlaps,"isr_cov_metadata":isr_cov_meta,"isr_multiclass_metadata":isr_multi_meta,"vicreg_metadata":vicreg_meta}
     (out/"summary.json").write_text(json.dumps(summary,indent=2))
     print(f"Saved: {out_file}",flush=True)
 if __name__=="__main__": main()
