@@ -47,7 +47,30 @@ Default grid:
 - Qwen2.5-1.5B, seeds 0/1/2
 - Qwen2.5-3B, seeds 0/1/2
 
-Jobs run sequentially on one GPU.
+Jobs run sequentially on one GPU. You can freely choose model(s) with the MODELS variable.
+
+Examples for separate servers:
+
+```bash
+MODELS="1.5B" SEEDS="0 1 2" bash experiments/retention_subspace_replication/run_all_qwen_replications.sh
+```
+
+```bash
+MODELS="3B" SEEDS="0 1 2" bash experiments/retention_subspace_replication/run_all_qwen_replications.sh
+```
+
+Run exact original 0.5B seed-0 protocol:
+
+```bash
+MODELS="0.5B" EXACT_0P5=1 bash experiments/retention_subspace_replication/run_all_qwen_replications.sh
+```
+
+Run 0.5B seed robustness without exact-reference mode:
+
+```bash
+MODELS="0.5B" SEEDS="0 1 2" bash experiments/retention_subspace_replication/run_all_qwen_replications.sh
+```
+
 
 Examples:
 
@@ -107,3 +130,25 @@ Do not use random-draw SD as a formal p-value. The independently trained model s
 ## GPU note
 
 This is full fine-tuning with standard AdamW. Qwen2.5-3B can need a high-memory GPU because optimizer states dominate memory. A100 80GB-class hardware is the safest target. If 3B OOMs, do not silently switch only that model to LoRA or quantization; that changes the protocol. Move the 3B job to a larger-memory GPU or define a second protocol consistently.
+
+
+## Exact 0.5B seed-0 mode
+
+Set `MODELS="0.5B" EXACT_0P5=1`. This mode forces the original protocol:
+- Qwen/Qwen2.5-0.5B
+- seed 0 only
+- Layer 20 of 24
+- micro batch 4, gradient accumulation 4
+- evaluation batch 8
+- extraction batch 16
+- rank 64
+- 8 random controls
+- EN->ZH
+- 20% ZH training fraction
+- LR 2e-5, weight decay 0.1
+- no gradient checkpointing
+- reload saved EN anchor before ZH adaptation, matching the original stage boundary
+
+It additionally writes `exact_reference_comparison.json`, comparing the reproduced baseline/training losses with the original seed-0 values. Small numerical differences can occur across CUDA/PyTorch/Transformers environments.
+
+The paper-main replication pipeline now includes both Step 6 and Step 7. Step 6 evaluates Transfer, Drift, ISR-Cov, ISR-Multiclass, and VICReg with energy-matched random controls. Step 7 decomposes Drift by ISR-Multiclass alignment and tests top/bottom 16 and 32 directions.
