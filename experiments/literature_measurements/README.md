@@ -118,7 +118,7 @@ from pathlib import Path
 p = Path("mechanism_runs/literature_measurements_3b")
 rows = [json.loads(s) for s in (p/"xnli_probe.jsonl").read_text().splitlines() if s]
 for source, target in (("probe_train","xnli_fit.jsonl"),("probe_test","xnli_eval.jsonl")):
-    (p/target).write_text("".join(json.dumps(r, ensure_ascii=False)+"\\n" for r in rows if r["split"]==source))
+    (p/target).write_text("".join(json.dumps(r, ensure_ascii=False)+"\n" for r in rows if r["split"]==source))
 PY
 python -m experiments.literature_measurements.affine_projection \
   --anchor_checkpoint "$ANCHOR" --adapted_checkpoint "$ADAPTED" \
