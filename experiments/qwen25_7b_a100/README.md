@@ -139,3 +139,38 @@ python -m unittest discover -s experiments/qwen25_7b_a100 -p 'test_sweep_learnin
 ```
 
 The LR grid can be extended without retraining the EN anchor: existing run folders are skipped, and only newly added learning rates are evaluated. The same remaining hyperparameters must be kept unchanged.
+
+## One-click 1M-ZH mechanism comparison: LR 4e-5 vs 2e-5
+
+Uses the **existing** full-ZH LR-sweep outputs (100% of ZH training data)
+and the same external EN anchor. Saves adapted checkpoints as needed, then
+refits fresh 7B subspaces for each learning rate and runs Step 7 and
+optionally Step 6. Runs serially on one GPU and skips completed outputs.
+
+```bash
+# On the pod, after git pull:
+nohup python -u experiments/qwen25_7b_a100/run_fullzh_lr_mechanisms.py \
+  --seed 0 --through step7 \
+  > qwen7b_fullzh_mechanisms.log 2>&1 &
+
+tail -f qwen7b_fullzh_mechanisms.log
+```
+
+Add `--through step6` to include both Step 7 and Step 6 for both LRs.
+Default order runs **4e-5 first, then 2e-5**. If your full-ZH LR-sweep
+output root differs from the default, pass `--sweep_root YOUR_ROOT`.
+The runner reads the original sweep configuration and checks the data budget.
+It does **not** call the original 20%-ZH runner.
+
+```bash
+python experiments/qwen25_7b_a100/run_fullzh_lr_mechanisms.py --dry_run
+python -m unittest discover -s experiments/qwen25_7b_a100 -p 'test_fullzh_lr_mechanisms.py' -v
+```
+
+Outputs: `replication_runs/qwen25_7b_a100_fullzh_mechanisms/seed0/lr_4e-05/`
+and `.../lr_2e-05/`, each with `subspaces/`,
+`drift_isr_partition/`, and optional `energy_controls/`.
+
+**Storage and compute:** each exported 7B adapted checkpoint needs ~15 GB;
+subspace extraction and Step 6/7 may be substantially slower than training.
+This has not yet been GPU-validated on an A100.
