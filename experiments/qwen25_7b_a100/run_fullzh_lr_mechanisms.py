@@ -26,8 +26,22 @@ def label(lr):
 
 
 def checkpoint_ok(path):
+    # Verify every sharded weights file from the HF safetensors index.
     path = Path(path)
-    return (path / "config.json").is_file() and bool(list(path.glob("*.safetensors")))
+    if not (path / "config.json").is_file():
+        return False
+    idx = path / "model.safetensors.index.json"
+    if idx.is_file():
+        try:
+            shards = set(json.loads(idx.read_text())["weight_map"].values())
+            return bool(shards) and all(
+                (path / name).is_file() and (path / name).stat().st_size > 0
+                for name in shards
+            )
+        except (OSError, KeyError, ValueError, TypeError):
+            return False
+    file = path / "model.safetensors"
+    return file.is_file() and file.stat().st_size > 0
 
 
 def launch(cmd, dry_run=False):
