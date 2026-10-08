@@ -7,7 +7,10 @@ exact numerical reproduction of the standard AdamW 0.5B reference.
 import argparse
 import gc
 import json
+import os
+import shutil
 import sys
+import uuid
 from pathlib import Path
 
 import torch
@@ -19,8 +22,52 @@ from invariance.train_sequence import evaluate, load_blocks, set_seed
 
 
 def complete_checkpoint(path):
+    """Reject incomplete sharded checkpoints left by interrupted saves."""
     p = Path(path)
-    return (p / "config.json").is_file() and bool(list(p.glob("*.safetensors")))
+    if not (p / "config.json").is_file():
+        return False
+    index = p / "model.safetensors.index.json"
+    if index.is_file():
+        try:
+            metadata = json.loads(index.read_text())
+            shards = set(metadata["weight_map"].values())
+            return bool(shards) and all(
+                (p / name).is_file() and (p / name).stat().st_size > 0
+                for name in shards
+            )
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+    standalone = p / "model.safetensors"
+    return standalone.is_file() and standalone.stat().st_size > 0
+
+
+def ensure_checkpoint_space(reference_checkpoint, destination, reserve_gib=4):
+    """Fail before costly training if a complete model checkpoint cannot fit."""
+    reference = Path(reference_checkpoint)
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    expected_bytes = sum(
+        item.stat().st_size for item in reference.glob("*.safetensors")
+        if item.is_file()
+    )
+    if not expected_bytes:
+        raise FileNotFoundError(
+            f"No model safetensors in reference checkpoint: {reference}"
+        )
+    required = expected_bytes + reserve_gib * 2**30
+    free = shutil.disk_usage(destination.parent).free
+    print(
+        f"[disk] available={free / 2**30:.1f} GiB; "
+        f"estimated_needed={required / 2**30:.1f} GiB "
+        f"for {destination}", flush=True,
+    )
+    if free < required:
+        raise OSError(
+            "Insufficient disk for saving this BF16 7B checkpoint. "
+            f"Free at least {(required-free)/2**30:.1f} more GiB "
+            "(prefer additional headroom), or increase Pod disk storage. "
+            "Do not delete the EN anchor or completed experiment results."
+        )
 
 
 def load_model(path):
@@ -98,9 +145,39 @@ def protocol_args(args):
 
 
 def save_model(model, tokenizer, path):
-    path.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(path, safe_serialization=True, max_shard_size="4GB")
-    tokenizer.save_pretrained(path)
+    """Save to a temporary sibling and expose only a complete checkpoint."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and any(path.iterdir()):
+        raise FileExistsError(
+            f"Refusing to overwrite existing directory: {path}. "
+            "Inspect and manually remove a FAILED partial checkpoint first."
+        )
+    # Full BF16 model weights; preflight for one entire save plus headroom.
+    param_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+    required = param_bytes + 4 * 2**30
+    available = shutil.disk_usage(path.parent).free
+    if available < required:
+        raise OSError(
+            f"Not enough free disk to save {path}: "
+            f"{available / 2**30:.1f} GiB free, "
+            f"at least {required / 2**30:.1f} GiB needed."
+        )
+    temp = path.parent / f".{path.name}.saving-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    try:
+        model.save_pretrained(
+            temp, safe_serialization=True, max_shard_size="4GB"
+        )
+        tokenizer.save_pretrained(temp)
+        if not complete_checkpoint(temp):
+            raise RuntimeError(f"New checkpoint is incomplete: {temp}")
+        if path.exists():
+            path.rmdir()  # only succeeds for an empty directory
+        temp.rename(path)
+    except BaseException:
+        if temp.exists():
+            shutil.rmtree(temp)
+        raise
 
 
 def measure(model, old_val, new_val, eval_batch):
