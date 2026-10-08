@@ -24,7 +24,7 @@ Run from the repository root:
     git checkout zijian_test
     git pull
 
-    export ANCHOR_CHECKPOINT=/workspace/Multilingual_test/replication_runs/qwen25_7b_a100_fresh_fullzh/seed0/lr_4e-05/anchor
+    export ANCHOR_CHECKPOINT=/workspace/Multilingual_test/replication_runs/qwen25_7b_a100_fresh_fullzh/seed0/anchor
     export ADAPTED_CHECKPOINT=/workspace/Multilingual_test/replication_runs/qwen25_7b_a100_fresh_fullzh/seed0/lr_4e-05/adapted
     export LAYER=23
     export MODEL_TAG=qwen25_7b_semantic_seed0
