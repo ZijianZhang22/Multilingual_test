@@ -16,6 +16,7 @@ STEP3_DIR="${STEP3_DIR:-mechanism_runs/step3_causal_removal_v2}"
 STEP4_DIR="${STEP4_DIR:-mechanism_runs/step4_causal_rescue_v2}"
 LOG_DIR="${LOG_DIR:-mechanism_runs/logs_first_four_steps}"
 ATLAS_DIR="${ATLAS_DIR:-mechanism_runs/functional_representation_atlas}"
+STEP6_DIR="${STEP6_DIR:-mechanism_runs/step6_energy_matched_controls}"
 
 TRAIN_FRACTION="${TRAIN_FRACTION:-0.20}"
 LAMBDAS="${LAMBDAS:-5 20 50}"
@@ -127,7 +128,7 @@ fi
 # Step 5: functional representation atlas across depth.
 # ----------------------------------------------------------------------
 echo
-echo "===== [5/5] Functional representation atlas ====="
+echo "===== [5/6] Functional representation atlas ====="
 if [[ -f "$ATLAS_DIR/functional_subspace_profile.csv" ]]; then
   echo "Functional atlas already complete; skipping."
 else
@@ -146,6 +147,29 @@ else
     --step4_dir "$STEP4_DIR" \
     --out_dir "$ATLAS_DIR" \
     2>&1 | tee "$LOG_DIR/05_functional_atlas.log"
+fi
+
+# ----------------------------------------------------------------------
+# Step 6: energy-matched multi-random controls for the causal story.
+# ----------------------------------------------------------------------
+echo
+echo "===== [6/6] Energy-matched multi-random causal controls ====="
+if [[ -f "$STEP6_DIR/energy_matched_summary.csv" ]]; then
+  echo "Step 6 already complete; skipping."
+else
+  python experiments/retention_subspace_mechanism/run_step6_energy_matched_controls.py \
+    --anchor_checkpoint "$ANCHOR" \
+    --adapted_checkpoint "$ADAPTED" \
+    --subspace_file "$SUBSPACE_FILE" \
+    --data_dir "$DATA_DIR" \
+    --old_language en \
+    --new_language zh \
+    --subspaces transfer drift isr_cov isr_multiclass vicreg \
+    --strengths 0.25 0.5 1.0 \
+    --n_random 8 \
+    --eval_max_blocks "$EVAL_MAX_BLOCKS" \
+    --out_dir "$STEP6_DIR" \
+    2>&1 | tee "$LOG_DIR/06_energy_matched_controls.log"
 fi
 
 # ----------------------------------------------------------------------
@@ -255,17 +279,22 @@ tar -czf "$PACKAGE_NAME" \
   "$ATLAS_DIR/atlas.json" \
   "$ATLAS_DIR/manifest.json" \
   "$ATLAS_DIR/bases" \
+  "$STEP6_DIR/energy_matched_summary.csv" \
+  "$STEP6_DIR/energy_matched_removal_draws.csv" \
+  "$STEP6_DIR/energy_matched_rescue_draws.csv" \
+  "$STEP6_DIR/manifest.json" \
   mechanism_runs/first_four_steps_summary.json \
   "$LOG_DIR"
 
 echo
 echo "============================================================"
-echo "ALL FIVE STEPS COMPLETE"
+echo "ALL SIX STEPS COMPLETE"
 echo "Step 1: $STEP1_DIR/results.csv"
 echo "Step 2: $STEP2_DIR/summary.json"
 echo "Step 3: $STEP3_DIR/matched_random_comparison.csv"
 echo "Step 4: $STEP4_DIR/matched_random_rescue_comparison.csv"
 echo "Atlas:  $ATLAS_DIR/functional_subspace_profile.csv"
+echo "Step 6: $STEP6_DIR/energy_matched_summary.csv"
 echo "Upload: $PACKAGE_NAME"
 echo "============================================================"
 ls -lh "$PACKAGE_NAME"
