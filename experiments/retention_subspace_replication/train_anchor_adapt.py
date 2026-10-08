@@ -20,6 +20,11 @@ def main():
     ap.add_argument("--micro_batch", type=int, default=1); ap.add_argument("--grad_accum", type=int, default=16)
     ap.add_argument("--eval_batch", type=int, default=4); ap.add_argument("--eval_max_blocks", type=int, default=128)
     ap.add_argument("--gradient_checkpointing", action="store_true")
+    ap.add_argument(
+        "--reload_anchor_before_new_stage",
+        action="store_true",
+        help="Reload the saved anchor before the new-language stage, matching the original Step-1 protocol.",
+    )
     ap.add_argument("--out_dir", required=True)
     args=ap.parse_args()
     if not torch.cuda.is_available(): raise RuntimeError("CUDA GPU required")
@@ -56,7 +61,24 @@ def main():
     anchor_old=evaluate(model, old_val, args.eval_batch, device, use_bf16)
     anchor_new=evaluate(model, new_val, args.eval_batch, device, use_bf16)
     print(f"[anchor] old={anchor_old:.6f} new={anchor_new:.6f}", flush=True)
-    set_seed(args.seed)
+
+    if args.reload_anchor_before_new_stage:
+        # The original mechanism Step-1 starts from a freshly loaded stage-1
+        # checkpoint after resetting the RNG. Reproduce that boundary exactly.
+        del model
+        torch.cuda.empty_cache()
+        set_seed(args.seed)
+        model=AutoModelForCausalLM.from_pretrained(
+            anchor_dir,
+            torch_dtype=torch.bfloat16 if use_bf16 else torch.float32,
+            low_cpu_mem_usage=True,
+        ).to(device)
+        model.config.use_cache=False
+        if args.gradient_checkpointing: model.gradient_checkpointing_enable()
+        print("[stage-boundary] reloaded saved anchor before new-language adaptation", flush=True)
+    else:
+        set_seed(args.seed)
+
     new_tokens=train_one_language(model, new_train, lr=args.lr, weight_decay=args.weight_decay, micro_batch=args.micro_batch, grad_accum=args.grad_accum, device=device, use_bf16=use_bf16)
     save_checkpoint(model, tok, adapted_dir)
     adapted_old=evaluate(model, old_val, args.eval_batch, device, use_bf16)
@@ -68,7 +90,7 @@ def main():
         "old_stage_shuffle_seed":args.seed+1000,"new_stage_shuffle_seed":new_shuffle_seed,
         "new_train_fraction":args.new_train_fraction,"old_train_blocks":len(old_train),"new_train_blocks":len(new_train),
         "old_tokens_seen":old_tokens,"new_tokens_seen":new_tokens,"lr":args.lr,"weight_decay":args.weight_decay,
-        "micro_batch":args.micro_batch,"grad_accum":args.grad_accum,
+        "micro_batch":args.micro_batch,"grad_accum":args.grad_accum,"reload_anchor_before_new_stage":args.reload_anchor_before_new_stage,
         "anchor_old_loss":anchor_old,"anchor_new_loss":anchor_new,"adapted_old_loss":adapted_old,"adapted_new_loss":adapted_new,
         "forgetting":forgetting,"new_language_gain":gain,"anchor_checkpoint":str(anchor_dir),"adapted_checkpoint":str(adapted_dir)
     }
