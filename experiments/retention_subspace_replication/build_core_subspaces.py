@@ -34,11 +34,17 @@ def fit_drift_basis(anchor_features,adapted_features,layer,rank):
     xa=a["features"][str(layer)].float(); xb=b["features"][str(layer)].float()
     if xa.shape!=xb.shape or a["example_ids"]!=b["example_ids"]:
         raise ValueError("Anchor/adapted probe features are not aligned.")
-    delta=xb-xa; dc=delta-delta.mean(dim=0,keepdim=True)
-    q=min(rank,dc.shape[0],dc.shape[1])
+    if a["splits"]!=b["splits"]:
+        raise ValueError("Anchor/adapted split mismatch")
+    train_idx=torch.tensor([i for i,sp in enumerate(a["splits"]) if sp=="probe_train"],dtype=torch.long)
+    if len(train_idx)<3:
+        raise ValueError("Drift PCA needs >=3 probe_train examples")
+    delta=(xb-xa)[train_idx]
+    dc=delta-delta.mean(dim=0,keepdim=True)
+    q=min(rank,dc.shape[0]-1,dc.shape[1])
     _,s,v=torch.pca_lowrank(dc,q=q,center=False)
     basis=v[:,:q]
-    ev=s[:q].pow(2); ev=ev/ev.sum().clamp_min(1e-12)
+    ev=s[:q].pow(2)/dc.square().sum().clamp_min(1e-12)
     return basis,delta,ev
 
 def overlap_stats(qa,qb):
@@ -72,10 +78,12 @@ def main():
     maybe(lang_file,[sys.executable,INV/"fit_inlp_language_subspace.py","--features_file",anchor_probe,"--out_file",lang_file,"--layer",args.layer,"--iters",args.inlp_iters,"--seed",0],args.force)
     maybe(transfer_file,[sys.executable,INV/"fit_transferable_subspace.py","--features_file",anchor_aligned,"--aligned_data_file",aligned,"--language_subspace_file",lang_file,"--out_file",transfer_file,"--layer",args.layer,"--rank",args.rank],args.force)
     probe_payload=torch.load(anchor_probe,map_location="cpu")
-    x_probe=probe_payload["features"][str(args.layer)].float(); center=x_probe.mean(dim=0)
+    x_probe=probe_payload["features"][str(args.layer)].float()
+    train_idx=torch.tensor([i for i,s in enumerate(probe_payload["splits"]) if s=="probe_train"],dtype=torch.long)
+    if len(train_idx)<3: raise ValueError("No train-only subspace fitting samples")
+    center=x_probe[train_idx].mean(dim=0)
     q_transfer=torch.load(transfer_file,map_location="cpu")["transferable_subspace_basis"].float()
     q_drift,delta,drift_ev=fit_drift_basis(anchor_probe,adapted_probe,args.layer,args.rank)
-    train_idx=torch.tensor([i for i,s in enumerate(probe_payload["splits"]) if s=="probe_train"],dtype=torch.long)
     x_train=x_probe[train_idx]
     langs_train=[probe_payload["languages"][i] for i in train_idx.tolist()]
     labels_train=probe_payload["labels"][train_idx].long()
@@ -102,6 +110,8 @@ def main():
         for b in names[i:]:
             overlaps[f"{a}__{b}"]=overlap_stats(real[a],real[b])
     artifact={
+        "fit_protocol":"probe_train_only_for_drift_isr_center; aligned_validation_only_for_transfer_vicreg",
+        "fit_split":"probe_train",
         "layer":args.layer,"hidden_dim":dim,"pool":args.pool,"anchor_checkpoint":args.anchor_checkpoint,"adapted_checkpoint":args.adapted_checkpoint,
         "fit_languages":args.languages,"center":center,"feature_files":{"anchor_probe":str(anchor_probe),"adapted_probe":str(adapted_probe),"anchor_aligned":str(anchor_aligned),"adapted_aligned":str(adapted_aligned)},"subspaces":subspaces,"real_subspaces":names,
         "matched_random_controls":controls,"ranks":{k:int(v.shape[1]) for k,v in subspaces.items()},
