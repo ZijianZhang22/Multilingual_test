@@ -11,6 +11,7 @@ from experiments.literature_measurements.core import (
     orthonormal, principal_overlap, with_hidden
 )
 from experiments.literature_measurements.transfer_probe import accuracy, fit_ridge
+from experiments.literature_measurements.retrieval import paired_retrieval, validate_metadata, compute
 
 
 class TestCore(unittest.TestCase):
@@ -72,6 +73,32 @@ class TestCore(unittest.TestCase):
         y = torch.tensor([0, 0, 1, 1])
         classifier = fit_ridge(x, y, 2, ridge=0.1)
         self.assertEqual(accuracy(classifier, x, y), 1.0)
+
+    def test_paired_retrieval(self):
+        query = torch.eye(4)
+        self.assertEqual(paired_retrieval(query, query), 1.0)
+        self.assertLess(paired_retrieval(query, query.flip(0)), 1.0)
+
+    def test_retrieval_heldout_fit(self):
+        fit = {
+            "pool": "mean", "source": "residual",
+            "languages": ["en", "zh"] * 4,
+            "pair_ids": [f"fit:{i}" for i in range(4) for _ in range(2)],
+            "features": {"12": torch.randn(8, 4)},
+        }
+        base = torch.tensor([[1., 0.], [0., 1.], [-1., 0.], [0., -1.]])
+        eva = {
+            "pool": "mean", "source": "residual",
+            "languages": ["en", "zh"] * 4,
+            "pair_ids": [f"eval:{i}" for i in range(4) for _ in range(2)],
+            "features": {"12": base.repeat_interleave(2, 0)},
+        }
+        validate_metadata(fit, eva)
+        res = compute(fit, eva, 12, "en", "zh", "raw")
+        self.assertEqual(res[2], 4)
+        self.assertEqual(res[0], 1.0)
+        with self.assertRaises(ValueError):
+            validate_metadata(fit, {**eva, "pair_ids": fit["pair_ids"]})
 
     def test_ranks_and_correlations(self):
         self.assertEqual(mean_rank([5, 1, 1, 9]), [3., 1.5, 1.5, 4.])
