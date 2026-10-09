@@ -1,5 +1,14 @@
 # Multilingual Training History -> Future Language Plasticity (Pilot)
 
+## Fixed-input activation heatmaps
+
+Run `bash run_activation_heatmaps.sh --pair tiny_zh` to compare the two public
+TinyLlama v1.1 English-dominant / Chinese-English branches on the same 100 inputs.
+Use `--pair all` for all three small-model pairs, or `--before` / `--after` for
+your own checkpoints. The script generates PNGs, CSVs, an HTML gallery, and a
+downloadable result ZIP. See [the heatmap guide](experiments/activation_heatmaps/README.md)
+for RunPod instructions and interpretation limits.
+
 Hypothesis: holding source languages, source examples, token budget, compute, and target data fixed, does the **schedule** of multilingual exposure change how quickly the model adapts to the same later target language?
 
 Default experiment:

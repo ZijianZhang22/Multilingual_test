@@ -1,0 +1,6 @@
+transformers>=4.48,<6
+accelerate>=1.0
+safetensors>=0.4
+numpy>=1.26
+matplotlib>=3.8
+packaging>=23
