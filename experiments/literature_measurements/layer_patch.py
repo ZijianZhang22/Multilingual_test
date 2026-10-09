@@ -94,10 +94,11 @@ def main():
     args = p.parse_args()
     if not 0 < args.alpha <= 1:
         p.error("--alpha must be within (0, 1]")
-    use_bf16 = not args.no_bf16 and str(args.device).startswith("cuda") and torch.cuda.is_bf16_supported()
+    device = torch.device(args.device)
+    use_bf16 = not args.no_bf16 and device.type == "cuda" and torch.cuda.is_bf16_supported()
 
-    anchor = load_model(args.anchor_checkpoint, args.device, use_bf16)
-    adapted = load_model(args.adapted_checkpoint, args.device, use_bf16)
+    anchor = load_model(args.anchor_checkpoint, device, use_bf16)
+    adapted = load_model(args.adapted_checkpoint, device, use_bf16)
     for model in (anchor, adapted):
         model.eval()
         for par in model.parameters():
@@ -114,20 +115,22 @@ def main():
     baselines = {}
     for lang, blocks in val.items():
         baselines[lang] = (
-            evaluate(anchor, blocks, args.batch_size, args.device, use_bf16),
-            evaluate(adapted, blocks, args.batch_size, args.device, use_bf16),
+            evaluate(anchor, blocks, args.batch_size, device, use_bf16),
+            evaluate(adapted, blocks, args.batch_size, device, use_bf16),
         )
         print(f"{lang}: anchor={baselines[lang][0]:.6f}, "
               f"adapted={baselines[lang][1]:.6f}", flush=True)
+    anchor.eval()
+    adapted.eval()
     out = []
     for layer in layer_ids:
         for lang in args.languages:
             blocks = val[lang]
             base_a, base_b = baselines[lang]
             patched = full_activation_patch(anchor, adapted, blocks, args.batch_size,
-                                             args.device, use_bf16, layer, alpha=args.alpha)
+                                             device, use_bf16, layer, alpha=args.alpha)
             wr = weight_restore_evaluate(anchor, adapted, blocks, args.batch_size,
-                                         args.device, use_bf16, layer) if args.weight_restore else None
+                                         device, use_bf16, layer) if args.weight_restore else None
             gap = base_b - base_a
             out.append({
                 "layer": layer, "language": lang, "alpha": args.alpha,
