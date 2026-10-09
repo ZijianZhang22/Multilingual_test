@@ -1,3 +1,71 @@
+## One-command runner (recommended)
+
+Once the code is on your RunPod, **one command** runs the selected workflow
+from a fresh output folder or resumes already completed stages:
+
+```bash
+cd /workspace/Multilingual_test
+git fetch origin
+git checkout feature/literature-measurement-suite
+git pull --ff-only
+
+ANCHOR=/actual/path/to/stage1_en ADAPTED=/actual/path/to/stage2_zh \
+  bash experiments/literature_measurements/run_all.sh
+```
+
+Defaults to **pilot**, containing clean core fit, held-out aligned XNLI,
+semantic donor patching, bidirectional EN/ZH Wiki rescue and summary.
+For **all experiments in this suite** (affine, layer similarity, aligned CKA,
+transfer probe, whole-layer patch, mean-centered retrieval and association):
+
+```bash
+ANCHOR=/actual/path/to/stage1_en ADAPTED=/actual/path/to/stage2_zh MODE=full \
+  bash experiments/literature_measurements/run_all.sh
+```
+
+Set `OUT=/workspace/results/my_3b_seed0` to make an independent run folder.
+Optional environment overrides: `CORE_LAYER=20`, `LAYERS=6,12,20,24`,
+`DATA_DIR=invariance_data/wiki`. Additional flags are accepted:
+
+```bash
+# Preview commands (no GPU required):
+ANCHOR=/path/A ADAPTED=/path/B MODE=full \
+  bash experiments/literature_measurements/run_all.sh --dry-run
+
+# Resuming is automatic. Force reexecution:
+ANCHOR=/path/A ADAPTED=/path/B \
+  bash experiments/literature_measurements/run_all.sh --no-resume
+
+# Repackage results without launching experiments or loading models:
+python -m experiments.literature_measurements.run_all \
+  --out mechanism_runs/literature_measurements_3b --archive-only
+
+# Optional larger archive including extracted features:
+python -m experiments.literature_measurements.run_all \
+  --out mechanism_runs/literature_measurements_3b --archive-only --include-pt
+```
+
+**Outputs:** `OUT/logs/*.log`, `OUT/.completed/*.done`,
+`OUT/run_manifest.json`, and `OUT_results.tar.gz`.
+The default archive includes CSV, JSON, logs, and documentation but **excludes
+large `.pt` features, checkpoints and Hugging Face weights**. To preserve
+the learned subspace bases and extracted features use `--include-pt`.
+
+**Resume contract:** completed stages are skipped only when marker AND
+required output files exist; a different configuration in the same output
+folder fails rather than silently mixing results. A crashed stage is rerun
+on the next invocation. If you update code after fitting core bases, use
+a new `OUT` folder when changing fitting logic so old intermediates cannot
+be misinterpreted.
+
+The runner requires local Anchor/Adapted checkpoints and EN/ZH Wiki
+validation blocks (it does NOT train models or download checkpoints).
+It calls the dataset preparation scripts to fetch XNLI from Hugging Face
+if input files were not already generated, so the server needs dataset
+access or a populated HF cache. Run the **pilot** first and check that
+EN forgetting is nonzero before spending time on the **full** suite.
+A 3B GPU end-to-end execution has NOT been confirmed.
+
 # Literature-inspired measurements of multilingual forgetting
 
 **Branch:** `feature/literature-measurement-suite` (based on `zijian_test`).
