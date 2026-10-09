@@ -222,6 +222,87 @@ centering and language-specific centering. Centers use **fit pairs only**;
 the script checks pair-ID separation. The score is retrieval/representation
 alignment, not proof the model *uses* these vectors in its computations.
 
+
+## Targeted semantic × forgetting suite: Drift / Transfer / ISR ONLY
+
+This is an additional **pilot**, NOT already-produced GPU results. Supported
+bases: `drift`, `transfer`, `isr_cov`, `isr_multiclass` plus one
+rank-matched random control for each. No VICReg or generic INLP in these new
+interventions (INLP is used only internally while fitting Transfer).
+
+**Refit core bases before a held-out claim.** Earlier
+`build_core_subspaces.py` used `probe_train+probe_test` features for Drift
+and its center; this branch fits Drift and center on `probe_train` only.
+This guard refuses old/unverified bundles unless `--allow_legacy_core`
+is deliberately used, in which case outputs are exploratory.
+
+```bash
+cd /workspace/Multilingual_test
+git checkout feature/literature-measurement-suite
+git pull --ff-only
+ANCHOR=/path/to/qwen25_3b_stage1_en
+ADAPTED=/path/to/qwen25_3b_stage2_zh
+OUT=mechanism_runs/literature_measurements_3b
+mkdir -p "$OUT"
+# A train-only core fit; may take substantial time to fit 5 bases.
+python -m experiments.retention_subspace_replication.build_core_subspaces \
+  --anchor_checkpoint "$ANCHOR" --adapted_checkpoint "$ADAPTED" \
+  --layer 20 --rank 64 --pool last \
+  --probe_train_per_lang 500 --probe_test_per_lang 200 \
+  --languages en zh fr de es \
+  --out_dir "$OUT/fit_last_layer20"
+
+CORE="$OUT/fit_last_layer20/core_subspaces.pt"
+# The aligned test dataset is HELD OUT, not used for fitting the core.
+python invariance/prepare_aligned_xnli.py --languages en zh \
+  --split test --n_examples 120 \
+  --out_file "$OUT/semantic_aligned_test.jsonl"
+
+# (1) Model-level causal semantic donor comparison at final prompt token.
+python -m experiments.literature_measurements.semantic_subspace_patch \
+  --checkpoint "$ADAPTED" --core_file "$CORE" \
+  --eval_jsonl "$OUT/semantic_aligned_test.jsonl" \
+  --spaces drift transfer isr_cov isr_multiclass \
+  --languages en zh --n_targets_per_language 6 \
+  --out_dir "$OUT/semantic_subspace"
+
+# (2) Reverse-direction, same-input causal LM patching.
+python -m experiments.literature_measurements.bidirectional_subspace \
+  --anchor_checkpoint "$ANCHOR" --adapted_checkpoint "$ADAPTED" \
+  --core_file "$CORE" --languages en zh --max_blocks 32 \
+  --spaces drift transfer isr_cov isr_multiclass \
+  --data_dir invariance_data/wiki --out_dir "$OUT/bidirectional"
+
+# (3) One side-by-side descriptive table.
+python -m experiments.literature_measurements.subspace_functional_summary \
+  --semantic_csv "$OUT/semantic_subspace/semantic_patching_summary.csv" \
+  --bidirectional_csv "$OUT/bidirectional/bidirectional_subspace_summary.csv" \
+  --out_dir "$OUT/functional_summary"
+```
+
+Outputs:
+- `semantic_patching_examples.csv`: same-translation donor vs unrelated
+  same-label and different-label donors; target NLI option accuracy/NLL,
+  donor-label margin, raw and matched injection magnitudes.
+- `semantic_patching_summary.csv`: per-space per-condition means.
+- `bidirectional_subspace_summary.csv`: old/new-language loss change,
+  fraction of EN forgetting recovered, fraction of forgetting induced on
+  Anchor, actual intervention RMS.
+- `subspace_functional_summary.csv`: descriptive bridge across experiments.
+
+**Interpret carefully:** The semantic donor patch is *last prompt-token*
+NLI, whereas bidirectional rescue uses *every token* on held-out Wiki. They
+share basis/layer but are NOT identical tasks or sites. Semantic matched-pair
+donors control for translation; a same-label random pair controls for label
+information. Neither automatically proves semantic circuits. Bidirectional
+effects establish reversible function sensitivity, not the training-time
+causal origin of forgetting. Natural energy and matched energy are both
+reported; matching uses shrink-only per-rank perturbations.
+
+For a faster first pilot, use `--spaces drift transfer isr_multiclass`
+and low `--n_targets_per_language`. Always retain the matched random
+controls. Run the 3B GPU pilot before interpreting scientific outcomes.
+
 ## Experimental hygiene
 
 1. **Separate fitting, model selection, and reporting**: do not fit bases,
