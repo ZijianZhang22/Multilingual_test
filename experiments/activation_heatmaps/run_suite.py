@@ -22,7 +22,7 @@ def valid_extraction(path, item, label):
     try:
         with np.load(path, allow_pickle=False) as z:
             meta = json.loads(str(z['metadata']))
-            expected = dict(model=item[label], tokenizer=item['tokenizer'],
+            expected = dict(pooling_version=2, model=item[label], tokenizer=item['tokenizer'],
                             input_sha256=item['input_sha256'], pool=item['pool'],
                             dtype=item['dtype'], max_length=item['max_length'])
             return (all(meta.get(k) == v for k, v in expected.items())
@@ -53,7 +53,7 @@ def run_logged(command, log):
 def build_plan(args):
     root = Path(__file__).resolve().parent
     from compare_activations import records
-    inputs = Path(args.inputs or root / 'inputs_100_en.jsonl').resolve()
+    inputs = Path(args.inputs or root / 'inputs_100_en_diverse.jsonl').resolve()
     rows = records(inputs, args.limit)
     row_hash = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
     if args.before or args.after:
@@ -63,7 +63,7 @@ def build_plan(args):
     else:
         names = list(PAIRS) if args.pair == 'all' else [args.pair]
         pairs = [(name, *PAIRS[name]) for name in names]
-    out = Path(args.out or root.parents[1] / 'activation_heatmap_results').resolve()
+    out = Path(args.out or root.parents[1] / 'activation_heatmap_results_v2').resolve()
     plan = []
     for name, before, after in pairs:
         tokenizer = args.tokenizer or before
@@ -81,10 +81,12 @@ def build_plan(args):
             if args.layers:
                 cmd += ['--layers', *map(str, args.layers)]
             steps.append((label, cmd))
-        steps.append(('compare', [sys.executable, str(root / 'compare_activations.py'), 'compare',
-                                 '--before', str(directory / 'before.npz'),
-                                 '--after', str(directory / 'after.npz'),
-                                 '--out', str(directory / 'comparison'), '--top-k', str(args.top_k)]))
+        pools = ('mean', 'last_nonpunct', 'last') if args.pool == 'all' else (args.pool,)
+        for pool in pools:
+            target = directory / pool if args.pool == 'all' else directory
+            steps.append((f'compare_{pool}', [sys.executable, str(root / 'compare_activations.py'), 'compare',
+                             '--before', str(target / 'before.npz'), '--after', str(target / 'after.npz'),
+                             '--out', str(target / 'comparison'), '--top-k', str(args.top_k)]))
         plan.append((item, directory, steps))
     return out, inputs, plan
 
@@ -100,7 +102,7 @@ def gallery(out, plan):
             rel = html.escape(image.relative_to(out).as_posix(), quote=True)
             cards.append(f'<figure><a href="{rel}"><img loading="lazy" src="{rel}"></a>'
                          f'<figcaption>{html.escape(image.name)}</figcaption></figure>')
-        sections.append(f'<section><h2>{html.escape(item["pair"])}</h2>'
+        sections.append(f'<section><h2>{html.escape(item["pair"])} / {html.escape(item.get("pool", "last"))}</h2>'
                         f'<p>{html.escape(item["before"])} → {html.escape(item["after"])}</p>'
                         f'<p>Token-weighted NLL: {summary["token_weighted_nll_before"]:.4f} → '
                         f'{summary["token_weighted_nll_after"]:.4f}</p>'
@@ -118,7 +120,7 @@ def gallery(out, plan):
             # Include only this invocation's selected pairs; omit large raw arrays.
             if not path.is_file() or path == archive or path.suffix == '.npz':
                 continue
-            if path.parent == out or any(path.is_relative_to(d) for _, d, _ in plan):
+            if path.parent == out or any(path.is_relative_to(d.parent if item.get('pool') in ('mean', 'last_nonpunct', 'last') and d.name == item.get('pool') else d) for item, d, _ in plan):
                 z.write(path, path.relative_to(out))
     return archive
 
@@ -131,7 +133,7 @@ def main():
     p.add_argument('--tokenizer')
     p.add_argument('--inputs')
     p.add_argument('--out')
-    p.add_argument('--pool', choices=['last', 'mean'], default='last')
+    p.add_argument('--pool', choices=['last', 'mean', 'last_nonpunct', 'all'], default='all')
     p.add_argument('--dtype', choices=['auto', 'bfloat16', 'float16', 'float32'], default='auto')
     p.add_argument('--device', default='auto')
     p.add_argument('--limit', type=int, default=100)
@@ -170,11 +172,20 @@ def main():
         reuse = args.resume and previous == item
         manifest.write_text(json.dumps(item, indent=2))
         for label, cmd in steps:
-            if label != 'compare' and reuse and valid_extraction(directory / f'{label}.npz', item, label):
+            pools = ('mean', 'last_nonpunct', 'last') if item['pool'] == 'all' else (item['pool'],)
+            complete = (all(valid_extraction(directory / pool / f'{label}.npz', dict(item, pool=pool), label) for pool in pools)
+                        if item['pool'] == 'all' else valid_extraction(directory / f'{label}.npz', item, label)) if not label.startswith('compare') else False
+            if reuse and complete:
                 print('REUSE:', directory / f'{label}.npz', flush=True)
                 continue
             run_logged(cmd, directory / f'{label}.log')
-    archive = gallery(out, plan)
+    gallery_plan = []
+    for item, directory, steps in plan:
+        if item['pool'] == 'all':
+            gallery_plan.extend((dict(item, pool=pool), directory / pool, steps) for pool in ('mean', 'last_nonpunct', 'last'))
+        else:
+            gallery_plan.append((item, directory, steps))
+    archive = gallery(out, gallery_plan)
     print(f'\nDONE\nImages and CSV: {out}\nGallery: {out / "index.html"}\nDownload archive: {archive}')
 
 

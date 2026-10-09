@@ -1,87 +1,94 @@
-# 同一输入的激活热图：RunPod一键运行
+# 同一输入的激活热图：RunPod 一键运行（v2）
 
-不需要先训练新模型。脚本下载公开模型配对，向两个模型分别输入同一批100句英文，直接生成PNG、CSV和HTML图册。模型依次加载，一次一个。
+下载公开模型配对，对同一批英文输入比较激活。一次只加载一个模型；默认在同一次前向计算里提取三种池化表示，不重复加载三遍。
 
-## 运行
+## 新 Pod
 
-使用带PyTorch>=2.6的RunPod镜像，进入仓库根目录：
-
-```bash
-# 推荐：1.1B英文为主分支与中英持续预训练分支
-bash run_activation_heatmaps.sh --pair tiny_zh
-
-# 更小的135M英俄SFT，先检查流程
-bash run_activation_heatmaps.sh --pair smol135_ru
-
-# 顺序运行所有三组：1.1B中英、135M英俄、360M英俄
-bash run_activation_heatmaps.sh --pair all
-
-# 已有依赖时跳过安装，失败重跑时复用匹配的已完成提取
-SKIP_INSTALL=1 bash run_activation_heatmaps.sh --pair all --resume
-```
-
-默认自动选择GPU bf16/fp16或CPU fp32。`--limit 10`用于快速检查；默认100句。若内存/显存紧张可改`--max-length 64`。一次处理一条输入，不使用生成或KV cache，也不安装FlashAttention。
+使用 PyTorch >=2.6 的 RunPod 镜像：
 
 ```bash
-# 自己的遗忘前后完整checkpoint；输入需要来自固定的旧语言测试集
-bash run_activation_heatmaps.sh \
-  --before /workspace/path/to/anchor \
-  --after /workspace/path/to/adapted \
-  --tokenizer /workspace/path/to/anchor \
-  --inputs /workspace/old_language_100.jsonl \
-  --out /workspace/own_forgetting_heatmaps
+cd /workspace
+git clone --single-branch --branch feature/literature-measurement-suite https://github.com/ZijianZhang22/Multilingual_test.git
+cd Multilingual_test
+bash run_activation_heatmaps.sh --pair all --pool all
 ```
 
-`before`和`after`必须同架构、同tokenizer/词表语义、共同初始权重。需要完整模型目录，不支持直接输入未合并LoRA adapter。支持Qwen/Llama/Gemma风格decoder.layers。
+已有 clone 时在该仓库执行 `git pull --ff-only origin feature/literature-measurement-suite`。先跑小模型可用 `--pair smol360_ru` 或 `--pair smol135_ru`。
+
+默认输出到 `activation_heatmap_results_v2/`，与旧版目录分开。默认 100 条输入，自动选择 GPU bf16/fp16 或 CPU fp32。`--limit 10` 可检查流程；`--resume` 可复用设置匹配且完整的缓存。`SKIP_INSTALL=1` 跳过依赖安装。
+
+## v2 改了什么
+
+- 新默认输入 `inputs_100_en_diverse.jsonl`：100 条人工编写的不同句子，分为对话、叙事、描述、指令、科学、技术、推理、数量、问题、论证十组。它是探索性诊断集，不是正式 benchmark，也不是随机抽取的真实语料。保留旧的五模板输入文件供对照。
+- `--pool all`（默认）：同时得到 `mean`、`last_nonpunct`、`last` 三套图。
+- `mean`：平均所有非 special token 的隐藏向量，包含标点。
+- `last_nonpunct`：从实际输入 token 序列向前寻找最后一个包含非标点、非空白字符的 token，排除 special token。只含标点的 token 会跳过；包含词和标点的混合 token 保留。没有改写或重新编码文本。
+- `last`：原版最后一个输入 token，保留作为标点/EOS 对照。
+- 元数据记录实际池化位置、对应解码文本以及是否截断。新旧缓存因 pooling_version 不同不能混用。
+- 新增幅度比热图、每个句子组的逐层 CKA/漂移/幅度比/漂移与 NLL 相关性。每组只有十句，分组结果仍然很不稳定。
+- NPZ 先写临时文件再原子替换，避免中断后复用半个文件。
+
+三种池化使用同一前向计算和同一输入，因此它们的 NLL **应该完全相同**；改变的是用于比较的激活表示。
 
 ## 输出
 
-默认位于仓库根目录`activation_heatmap_results/`：
-
 ```text
-activation_heatmap_results/
-  index.html                       所选配对全部PNG的图册
-  activation_heatmaps_results.zip   可下载的图片、CSV、日志、设置包
-  tiny_zh/                         每组单独目录
-    before.npz / after.npz          原始池化激活，留在服务器，不包含在ZIP
-    before.log / after.log / compare.log
-    comparison/
-      00_overview.png               六格总览，建议先看
-      01_before.png / 02_after.png  句子×层，隐状态RMS，相同色标
-      03_rms_difference.png         后减前的幅度变化
-      04_relative_drift.png         向量差范数 / 训练前范数
-      05_directional_drift.png      1−cosine
-      module_*_before/after/difference.png
-      per_sample_layer.csv
-      layer_summary.csv            每层CKA与平均漂移
-      summary.json
+activation_heatmap_results_v2/
+  index.html
+  activation_heatmaps_results.zip
+  invocation.json
+  tiny_zh/                         另外两组为 smol135_ru、smol360_ru
+    before.log / after.log
+    compare_mean.log / compare_last_nonpunct.log / compare_last.log
+    run_manifest.json
+    mean/                          另有 last_nonpunct/、last/
+      before.npz / after.npz        原始激活，不放入 ZIP
+      comparison/
+        00_overview.png
+        01_before.png / 02_after.png
+        03_rms_difference.png
+        04_relative_drift.png
+        05_directional_drift.png
+        06_rms_ratio.png            after RMS / before RMS，1=幅度相同
+        module_*_before/after/difference.png
+        per_sample_layer.csv
+        layer_summary.csv
+        group_layer_summary.csv
+        diagnostics.json           token、截断、损失退化数、整体相关性
+        summary.json
 ```
 
-运行完成后，从RunPod文件浏览器下载`activation_heatmaps_results.zip`，解压即可打开`index.html`查看全部图片。日志逐条打印进度；任何阶段失败会停止，不生成成功提示。
+从 RunPod 文件浏览器下载 `activation_heatmap_results_v2/activation_heatmaps_results.zip`，解压打开 `index.html`。完整原始 NPZ 留在服务器，如想以后重新计算指标请另行备份。
 
-## 你在比较什么
+优先比较同一模型的 `mean` 与 `last_nonpunct` 总览：若只在 `last` 出现强烈条纹，很可能与句末位置有关；若三种都出现，则变化更广泛，但仍然不是机制的因果证据。
 
-默认`inputs_100_en.jsonl`是人工组合的试跑句子，不是正式benchmark。两个模型使用同一个tokenizer，对相同文本得到相同token IDs。先比较旧语言英文的响应，也可以准备100句中文/俄语另跑，使用不同`--out`。
+单独一种池化可用 `--pool mean`。此时输出为 `配对/comparison/`，不增加池化子目录。
 
-JSONL每行格式：
+旧输入对照：
 
-```json
-{"id":"en_001","group":"greeting","text":"Hello, how are you today?"}
+```bash
+bash run_activation_heatmaps.sh --pair all --pool all \
+  --inputs experiments/activation_heatmaps/inputs_100_en.jsonl \
+  --out /workspace/heatmaps_old_inputs_controls
 ```
 
-- 默认取每层block输出的最后输入token向量；也可以`--pool mean`，两次都使用相同设置。
-- module图默认记录约1/3、2/3、最后层的Q/K/V/O、gate/up/down投影输出。`--layers 7 14 21`可指定0开始的层号。
-- module图选本批输入上平均绝对激活差最大的64通道；前/后图同通道顺序、同色标。它是探索性选取，不代表已经定位到功能重要单元。
-- down_proj输出通道不是SwiGLU中间神经元；这里的模块通道与MLP原始中间神经元需要区分。
-- RMS变化小不代表方向没变，需结合relative drift与cosine。CKA比较固定样本间的表示结构，不保证功能保留。
-- NLL是原始输入整段文本的下一个token预测损失，不是问答正确率或answer-only loss。
-- 各配对的训练与解释限制见`MODEL_PAIRS.md`。TinyLlama是共同起点的两个分支；Eagle有SFT和领域/格式因素，俄语能力有限。
-- 这些公开配对没有预先确认发生灾难性遗忘。真正的“遗忘前后”分析要先在独立旧任务上确认退化，再解释激活变化。
+自己的完整 checkpoint：
 
-## 断点与重复运行
+```bash
+bash run_activation_heatmaps.sh \
+  --before /workspace/anchor --after /workspace/adapted \
+  --tokenizer /workspace/anchor --inputs /workspace/old_language_100.jsonl \
+  --pool all --out /workspace/own_forgetting_heatmaps
+```
 
-`--resume`只复用输入、模型名、tokenizer、池化、精度、长度与层设置匹配的完整NPZ，并重新生成图。不同设置请使用不同`--out`，防止混淆。不要在保留路径的同时修改checkpoint权重后用`--resume`；模型名/本地路径不变并不能自动识别权重内容变化。完整提取文件写完后才可复用，中断的提取会重跑。
+输入是 JSONL，每行 `{"id":"unique", "group":"optional", "text":"nonempty text"}`。before/after 须同架构、同词表语义、共同初始权重；未合并 LoRA adapter 不支持。支持 layers.N 风格解码器。
 
-## 验证
+## 解释限制
 
-覆盖身份对照、向量符号翻转、CKA、输入不一致拒绝、断点缓存核对、命令生成、HTML/ZIP生成与数值绘图。测试通过不代表真实模型的结果。执行`python -m unittest discover -s experiments/activation_heatmaps/tests`。
+热图横轴为层，纵轴为输入句子；每格是整条池化向量的统计量，并非单个参数。模块图横轴才是通道编号。RMS 大不表示能力好；相对漂移大不等于遗忘百分比；CKA 衡量样本间结构，不保证功能保留。
+
+模块图选当前样本集上差异最大的通道，是探索性选择，不是功能重要性结论。NLL 是原始输入整段的 next-token loss，不是问答正确率。公开模型配对的语言/SFT/分支混杂见 MODEL_PAIRS.md；要确证遗忘需要独立旧任务评测，并检查新语言是否真正改善。
+
+不要修改 checkpoint 权重而保留原路径后使用 `--resume`。不同设置请用不同输出目录。
+
+验证：`python -m unittest discover -s experiments/activation_heatmaps/tests`。覆盖数值对照、Unicode 标点与 special token 池化选择、缓存、命令、CSV/图册/ZIP；本地没有 GPU 模型运行验证。

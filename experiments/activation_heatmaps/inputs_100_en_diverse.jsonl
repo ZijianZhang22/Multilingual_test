@@ -1,0 +1,100 @@
+{"id": "diverse_000", "group": "conversation", "text": "Hello, how are you doing today?"}
+{"id": "diverse_001", "group": "conversation", "text": "I haven't seen you since the conference in Boston."}
+{"id": "diverse_002", "group": "conversation", "text": "Would you prefer tea or coffee before we start?"}
+{"id": "diverse_003", "group": "conversation", "text": "Thanks for waiting; the bus was delayed by heavy rain."}
+{"id": "diverse_004", "group": "conversation", "text": "That sounds interesting, but I don't understand the last part."}
+{"id": "diverse_005", "group": "conversation", "text": "Could we move our meeting to Thursday afternoon?"}
+{"id": "diverse_006", "group": "conversation", "text": "I'm glad you called because I have some good news."}
+{"id": "diverse_007", "group": "conversation", "text": "Sorry, I thought you were talking to someone else."}
+{"id": "diverse_008", "group": "conversation", "text": "Let's take a short break and come back in ten minutes."}
+{"id": "diverse_009", "group": "conversation", "text": "Yes, I can hear you clearly now"}
+{"id": "diverse_010", "group": "narrative", "text": "Maya found an old photograph inside a book she borrowed from the library."}
+{"id": "diverse_011", "group": "narrative", "text": "The train had already left when Daniel reached the empty platform."}
+{"id": "diverse_012", "group": "narrative", "text": "After three unsuccessful attempts, the child finally balanced on the bicycle."}
+{"id": "diverse_013", "group": "narrative", "text": "At dawn, a fisherman noticed a small boat drifting toward the rocks."}
+{"id": "diverse_014", "group": "narrative", "text": "The lights went out halfway through dinner, so we lit two candles."}
+{"id": "diverse_015", "group": "narrative", "text": "She returned the wallet without opening the envelope tucked inside."}
+{"id": "diverse_016", "group": "narrative", "text": "Nobody noticed the missing key until the shop closed for the night."}
+{"id": "diverse_017", "group": "narrative", "text": "While his sister packed the car, Leo checked the weather forecast."}
+{"id": "diverse_018", "group": "narrative", "text": "A dog followed us home and waited patiently outside the front door."}
+{"id": "diverse_019", "group": "narrative", "text": "The letter arrived a week late, with no name on the envelope"}
+{"id": "diverse_020", "group": "description", "text": "The apartment has two small bedrooms and a window facing the river."}
+{"id": "diverse_021", "group": "description", "text": "A thin layer of frost covered the grass beneath the apple trees."}
+{"id": "diverse_022", "group": "description", "text": "The market smelled of fresh bread, roasted nuts, and ripe oranges."}
+{"id": "diverse_023", "group": "description", "text": "His coat was dark blue, with a torn pocket on the left side."}
+{"id": "diverse_024", "group": "description", "text": "The dashboard displays temperature, battery level, and estimated travel time."}
+{"id": "diverse_025", "group": "description", "text": "Behind the museum stood a narrow alley filled with parked bicycles."}
+{"id": "diverse_026", "group": "description", "text": "The room was quiet except for the steady hum of a refrigerator."}
+{"id": "diverse_027", "group": "description", "text": "Three wooden chairs surrounded a table covered in handwritten notes."}
+{"id": "diverse_028", "group": "description", "text": "The mountain appeared purple in the fading evening light."}
+{"id": "diverse_029", "group": "description", "text": "On the shelf: a brass clock, two notebooks, and a cracked cup"}
+{"id": "diverse_030", "group": "instructions", "text": "Wash the rice twice before adding it to the saucepan."}
+{"id": "diverse_031", "group": "instructions", "text": "To reset the device, hold the power button for five seconds."}
+{"id": "diverse_032", "group": "instructions", "text": "Save a copy of your document before making major changes."}
+{"id": "diverse_033", "group": "instructions", "text": "Turn left after the bridge, then continue until you reach the station."}
+{"id": "diverse_034", "group": "instructions", "text": "Read both options carefully and choose the one supported by the passage."}
+{"id": "diverse_035", "group": "instructions", "text": "Place the seedlings near a window, but keep them out of direct sunlight."}
+{"id": "diverse_036", "group": "instructions", "text": "If the screen freezes, close the application and reopen it."}
+{"id": "diverse_037", "group": "instructions", "text": "Measure the flour by weight rather than pressing it into the cup."}
+{"id": "diverse_038", "group": "instructions", "text": "Please summarize the main argument in three short sentences."}
+{"id": "diverse_039", "group": "instructions", "text": "First unplug the cable; then remove the cover"}
+{"id": "diverse_040", "group": "science", "text": "Water expands when it freezes, which can damage pipes in cold weather."}
+{"id": "diverse_041", "group": "science", "text": "A vaccine helps the immune system recognize a pathogen before exposure."}
+{"id": "diverse_042", "group": "science", "text": "The Moon reflects sunlight rather than producing its own visible light."}
+{"id": "diverse_043", "group": "science", "text": "An electric current creates a magnetic field around a conducting wire."}
+{"id": "diverse_044", "group": "science", "text": "Plants use carbon dioxide and water to produce sugars during photosynthesis."}
+{"id": "diverse_045", "group": "science", "text": "The speed of sound depends on the medium and its temperature."}
+{"id": "diverse_046", "group": "science", "text": "A mutation may be harmful, beneficial, or have no detectable effect."}
+{"id": "diverse_047", "group": "science", "text": "Scientists repeated the experiment to check whether the result was reproducible."}
+{"id": "diverse_048", "group": "science", "text": "Evaporation can cool a surface because higher-energy molecules escape first."}
+{"id": "diverse_049", "group": "science", "text": "An observation alone does not establish a causal relationship"}
+{"id": "diverse_050", "group": "technology", "text": "The program reads a file, counts the words, and writes a summary."}
+{"id": "diverse_051", "group": "technology", "text": "A password manager can generate a different password for each account."}
+{"id": "diverse_052", "group": "technology", "text": "The server returned an error after the connection timed out."}
+{"id": "diverse_053", "group": "technology", "text": "We reduced memory usage by processing the records in smaller batches."}
+{"id": "diverse_054", "group": "technology", "text": "An index can accelerate database queries but takes additional storage."}
+{"id": "diverse_055", "group": "technology", "text": "The sensor sends a measurement every thirty seconds over a wireless link."}
+{"id": "diverse_056", "group": "technology", "text": "A compiler translates source code into another executable representation."}
+{"id": "diverse_057", "group": "technology", "text": "The software update fixed a bug that caused duplicate notifications."}
+{"id": "diverse_058", "group": "technology", "text": "Changing a filename does not change the contents of the file."}
+{"id": "diverse_059", "group": "technology", "text": "The backup completed successfully, but the original folder was empty"}
+{"id": "diverse_060", "group": "reasoning", "text": "All roses in this garden are flowers, but not all its flowers are roses."}
+{"id": "diverse_061", "group": "reasoning", "text": "If the road is closed, we will take the train instead."}
+{"id": "diverse_062", "group": "reasoning", "text": "The box is lighter than the suitcase but heavier than the backpack."}
+{"id": "diverse_063", "group": "reasoning", "text": "Sam arrived before Alex, and Alex arrived before Jordan."}
+{"id": "diverse_064", "group": "reasoning", "text": "Neither of the two explanations accounts for the missing measurement."}
+{"id": "diverse_065", "group": "reasoning", "text": "The experiment failed even though the equipment appeared to work normally."}
+{"id": "diverse_066", "group": "reasoning", "text": "A lower price does not necessarily mean a lower total cost."}
+{"id": "diverse_067", "group": "reasoning", "text": "We need more evidence before deciding which explanation is most plausible."}
+{"id": "diverse_068", "group": "reasoning", "text": "Some students speak French; this does not imply that every student does."}
+{"id": "diverse_069", "group": "reasoning", "text": "The statement could be true, but the argument does not prove it"}
+{"id": "diverse_070", "group": "quantities", "text": "The recipe serves four people and requires two hundred grams of rice."}
+{"id": "diverse_071", "group": "quantities", "text": "A ticket costs twelve dollars, and a return ticket costs twenty."}
+{"id": "diverse_072", "group": "quantities", "text": "The temperature fell from eight degrees to minus three overnight."}
+{"id": "diverse_073", "group": "quantities", "text": "We collected sixty samples, but only fifty-four passed the quality check."}
+{"id": "diverse_074", "group": "quantities", "text": "The journey took two hours longer than the schedule predicted."}
+{"id": "diverse_075", "group": "quantities", "text": "There are seven shelves, with nine books on each shelf."}
+{"id": "diverse_076", "group": "quantities", "text": "The account earned interest, although its purchasing power decreased."}
+{"id": "diverse_077", "group": "quantities", "text": "Half of the participants received a reminder before the survey closed."}
+{"id": "diverse_078", "group": "quantities", "text": "The package weighs 1.5 kilograms without the protective wrapping."}
+{"id": "diverse_079", "group": "quantities", "text": "The second estimate was approximately twice the first"}
+{"id": "diverse_080", "group": "questions", "text": "Why does a metal spoon feel colder than a wooden spoon in the same room?"}
+{"id": "diverse_081", "group": "questions", "text": "What evidence would help distinguish these two explanations?"}
+{"id": "diverse_082", "group": "questions", "text": "How can we tell whether the sample represents the wider population?"}
+{"id": "diverse_083", "group": "questions", "text": "Where should I look if the downloaded file is missing?"}
+{"id": "diverse_084", "group": "questions", "text": "When did the railway first connect these two cities?"}
+{"id": "diverse_085", "group": "questions", "text": "Which route avoids the steep hill near the school?"}
+{"id": "diverse_086", "group": "questions", "text": "Does the conclusion still follow if we remove the second assumption?"}
+{"id": "diverse_087", "group": "questions", "text": "Who is responsible for checking the final version of the report?"}
+{"id": "diverse_088", "group": "questions", "text": "Can a system be reliable overall and still fail on unusual inputs?"}
+{"id": "diverse_089", "group": "questions", "text": "What would change if the experiment used a different control group?"}
+{"id": "diverse_090", "group": "argument", "text": "Public transport can reduce congestion, but its benefits depend on reliable service."}
+{"id": "diverse_091", "group": "argument", "text": "The proposal saves money initially while increasing maintenance costs later."}
+{"id": "diverse_092", "group": "argument", "text": "A useful explanation should account for observations that disagree with it."}
+{"id": "diverse_093", "group": "argument", "text": "Although the two surveys report similar averages, their distributions differ."}
+{"id": "diverse_094", "group": "argument", "text": "The review praised the book's examples but criticized its unsupported claims."}
+{"id": "diverse_095", "group": "argument", "text": "Improving a single metric may leave other aspects of performance unchanged."}
+{"id": "diverse_096", "group": "argument", "text": "The policy affected rural and urban communities in different ways."}
+{"id": "diverse_097", "group": "argument", "text": "We should distinguish uncertainty in a measurement from variation across samples."}
+{"id": "diverse_098", "group": "argument", "text": "The result is encouraging, yet it needs confirmation on independent data."}
+{"id": "diverse_099", "group": "argument", "text": "A convincing argument explains why the alternatives fit the evidence less well"}

@@ -2,7 +2,7 @@
 
 ## Fixed-input activation heatmaps
 
-Run `bash run_activation_heatmaps.sh --pair tiny_zh` to compare the two public
+Run `bash run_activation_heatmaps.sh --pair all --pool all` to compare the two public
 TinyLlama v1.1 English-dominant / Chinese-English branches on the same 100 inputs.
 Use `--pair all` for all three small-model pairs, or `--before` / `--after` for
 your own checkpoints. The script generates PNGs, CSVs, an HTML gallery, and a

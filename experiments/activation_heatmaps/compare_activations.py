@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import re
+import unicodedata
 from pathlib import Path
 import numpy as np
 
@@ -20,6 +21,30 @@ def records(path, limit):
     for r, sid in zip(rows, ids):
         r['id'] = sid
     return rows
+
+
+POOLS = ('mean', 'last_nonpunct', 'last')
+
+
+def pooling_indices(tokenizer, ids, pool):
+    """Select content positions using actual decoded tokens, excluding special tokens.
+
+    last_nonpunct skips tokens containing only punctuation/whitespace. A token
+    containing both a word and punctuation is retained; no retokenization occurs.
+    """
+    special = set(tokenizer.all_special_ids)
+    content = [i for i, tid in enumerate(ids) if tid not in special]
+    if not content:
+        raise ValueError('No non-special input tokens for pooling.')
+    if pool == 'mean':
+        return content
+    if pool == 'last':
+        return [len(ids) - 1]  # exact legacy control, includes EOS if present
+    for i in reversed(content):
+        text = tokenizer.decode([ids[i]], skip_special_tokens=False)
+        if any(not c.isspace() and not unicodedata.category(c).startswith('P') for c in text):
+            return [i]
+    raise ValueError('No non-punctuation token for last_nonpunct pooling.')
 
 
 def extract(args):
@@ -42,14 +67,18 @@ def extract(args):
     chosen = sorted(set(args.layers or [n // 3, 2 * n // 3, n - 1]))
     if any(i < 0 or i >= n for i in chosen):
         raise ValueError(f'Module layer indexes must be 0..{n - 1}.')
-    cache, collected, handles = {}, {}, []
+    pools = POOLS if args.pool == 'all' else (args.pool,)
+    cache, collected, handles = {}, {pool: {} for pool in pools}, []
+    selections = {}
+    positions = {pool: [] for pool in pools}
+    truncation = []
 
     def hook(key):
         def capture(module, inputs, output):
             x = output[0] if isinstance(output, tuple) else output
             x = x.detach().float()[0]
-            x = x[-1] if args.pool == 'last' else x.mean(dim=0)
-            cache[key] = x.cpu().numpy()
+            for pool in pools:
+                cache[(pool, key)] = x[selections[pool]].mean(dim=0).cpu().numpy()
         return capture
 
     for i, (name, module) in sorted(blocks.items()):
@@ -72,6 +101,11 @@ def extract(args):
                 ids = enc['input_ids'][0].tolist()
                 if len(ids) < 2:
                     raise ValueError(f'Sample {r["id"]} has fewer than 2 tokens.')
+                full_ids = tok(r['text'], add_special_tokens=True)['input_ids']
+                truncation.append(len(full_ids) > len(ids))
+                for pool in pools:
+                    selections[pool] = pooling_indices(tok, ids, pool)
+                    positions[pool].append(selections[pool])
                 token_ids.append(ids)
                 counts.append(len(ids) - 1)
                 enc = {k: v.to(input_device) for k, v in enc.items()}
@@ -79,27 +113,36 @@ def extract(args):
                 out = model(**enc, labels=enc['input_ids'], use_cache=False,
                             output_hidden_states=False, return_dict=True)
                 losses.append(float(out.loss))
-                for key, val in cache.items():
-                    collected.setdefault(key, []).append(val)
+                for (pool, key), val in cache.items():
+                    collected[pool].setdefault(key, []).append(val)
                 del out
                 print(f'{i + 1}/{len(rows)} loss={losses[-1]:.4f}', flush=True)
     finally:
         for handle in handles:
             handle.remove()
-    if any(len(v) != len(rows) for v in collected.values()):
-        raise ValueError('A hooked module did not execute once per sample.')
-    hidden = np.stack([np.stack(collected.pop(f'hidden_{i}')) for i in range(n)], axis=1)
-    meta = dict(model=args.model, tokenizer=args.tokenizer or args.model, pool=args.pool,
-                max_length=args.max_length, rows=rows, token_ids=token_ids,
-                module_layers=chosen, dtype=args.dtype, torch=torch.__version__,
-                transformers=transformers.__version__, layer_index='zero-based block output',
-                input_sha256=hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest())
-    path = Path(args.out)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, hidden=hidden, loss=np.array(losses), counts=np.array(counts),
-                        metadata=np.array(json.dumps(meta)),
-                        **{k: np.stack(v) for k, v in collected.items()})
-    print('Saved', path)
+    for pool in pools:
+        data = collected[pool]
+        if any(len(v) != len(rows) for v in data.values()):
+            raise ValueError('A hooked module did not execute once per sample.')
+        hidden = np.stack([np.stack(data.pop(f'hidden_{i}')) for i in range(n)], axis=1)
+        meta = dict(model=args.model, tokenizer=args.tokenizer or args.model, pool=pool,
+                    pooling_version=2, pooling_positions=positions[pool],
+                    pooled_token_texts=[[tok.decode([ids[i]]) for i in indices]
+                                       for ids, indices in zip(token_ids, positions[pool])],
+                    truncated=truncation, max_length=args.max_length, rows=rows, token_ids=token_ids,
+                    module_layers=chosen, dtype=args.dtype, torch=torch.__version__,
+                    transformers=transformers.__version__, layer_index='zero-based block output',
+                    input_sha256=hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest())
+        path = Path(args.out)
+        if args.pool == 'all':
+            path = path.parent / pool / path.name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix('.tmp.npz')
+        np.savez_compressed(temporary, hidden=hidden, loss=np.array(losses), counts=np.array(counts),
+                            metadata=np.array(json.dumps(meta)),
+                            **{k: np.stack(v) for k, v in data.items()})
+        temporary.replace(path)
+        print('Saved', path)
 
 
 def cosine(a, b):
@@ -126,7 +169,7 @@ def heatmap(data, title, path, *, signed=False, limits=None, xticks=None):
         limits = (-v, v) if signed else (0, v)
     im = ax.imshow(data, aspect='auto', interpolation='nearest',
                    cmap='RdBu_r' if signed else 'viridis', vmin=limits[0], vmax=limits[1])
-    ax.set(title=title, xlabel='Layer (zero-based) / channel ID', ylabel='Sample index (CSV order)')
+    ax.set(title=title, xlabel='Layer (zero-based)' if xticks is None else 'Channel ID', ylabel='Sample index (CSV order)')
     if xticks is not None:
         step = max(1, len(xticks) // 16)
         ax.set_xticks(np.arange(0, len(xticks), step))
@@ -144,7 +187,8 @@ def csv_file(path, fields, rows):
         writer.writerows(rows)
 
 
-def overview(rms_b, rms_a, relative, cos, layers, loss_delta, path):
+def overview(rms_b, rms_a, relative, cos, layers, loss_delta, path, pool=""):
+    # Pooling label follows each image when viewed outside the HTML gallery.
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -164,7 +208,7 @@ def overview(rms_b, rms_a, relative, cos, layers, loss_delta, path):
     axes[1, 2].scatter(relative.mean(axis=1), loss_delta, s=16, alpha=.65)
     axes[1, 2].axhline(0, color='gray', linewidth=1)
     axes[1, 2].set(title='Drift vs. sentence NLL change', xlabel='Mean relative drift', ylabel='NLL after - before')
-    fig.suptitle('Fixed-input activation comparison (descriptive, not causal)', fontsize=16)
+    fig.suptitle(f'Fixed-input activation comparison | pool={pool} (descriptive, not causal)', fontsize=16)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
@@ -175,8 +219,8 @@ def compare(args):
     dest.mkdir(parents=True, exist_ok=True)
     with np.load(args.before, allow_pickle=False) as before, np.load(args.after, allow_pickle=False) as after:
         mb, ma = [json.loads(str(z['metadata'])) for z in (before, after)]
-        for key in ('rows', 'token_ids', 'pool', 'max_length', 'module_layers'):
-            if mb[key] != ma[key]:
+        for key in ('rows', 'token_ids', 'pool', 'max_length', 'module_layers', 'pooling_version', 'pooling_positions'):
+            if mb.get(key) != ma.get(key):
                 raise ValueError(f'Incompatible runs: {key} differs. Use identical inputs/tokenizer/options.')
         if set(before.files) != set(after.files) or before['hidden'].shape != after['hidden'].shape:
             raise ValueError('Architecture or extracted modules differ.')
@@ -203,7 +247,33 @@ def compare(args):
         layers = [dict(layer=l, linear_cka=cka(x[:, l], y[:, l]),
                        mean_relative_drift=relative[:, l].mean()) for l in range(x.shape[1])]
         csv_file(dest / 'layer_summary.csv', list(layers[0]), layers)
-        overview(rms_b, rms_a, relative, cos, layers, after['loss'] - before['loss'], dest / '00_overview.png')
+        overview(rms_b, rms_a, relative, cos, layers, after['loss'] - before['loss'], dest / '00_overview.png', pool=mb['pool'])
+        loss_delta = after['loss'] - before['loss']
+        def correlation(a, b):
+            return float(np.corrcoef(a, b)[0, 1]) if len(a) >= 3 and np.std(a) > 1e-12 and np.std(b) > 1e-12 else None
+        groups = sorted({r.get('group', 'ungrouped') for r in mb['rows']})
+        grouped = []
+        for group in ['ALL', *groups]:
+            idx = np.array([i for i, r in enumerate(mb['rows']) if group == 'ALL' or r.get('group', 'ungrouped') == group])
+            for layer in range(x.shape[1]):
+                grouped.append(dict(group=group, n=len(idx), layer=layer,
+                    linear_cka=cka(x[idx, layer], y[idx, layer]) if len(idx) >= 3 else float('nan'),
+                    mean_relative_drift=float(relative[idx, layer].mean()),
+                    mean_cosine=float(cos[idx, layer].mean()),
+                    mean_rms_ratio=float((rms_a[idx, layer] / np.maximum(rms_b[idx, layer], 1e-12)).mean()),
+                    mean_nll_delta=float(loss_delta[idx].mean()),
+                    drift_nll_correlation=correlation(relative[idx, layer], loss_delta[idx])))
+        csv_file(dest / 'group_layer_summary.csv', list(grouped[0]), grouped)
+        ratio = rms_a / np.maximum(rms_b, 1e-12)
+        heatmap(ratio, 'Activation RMS ratio: after / before', dest / '06_rms_ratio.png')
+        diagnostics = dict(pool=mb['pool'], samples=len(mb['rows']),
+            worse_samples=int((loss_delta > 0).sum()), better_samples=int((loss_delta < 0).sum()),
+            mean_drift_nll_correlation=correlation(relative.mean(axis=1), loss_delta),
+            last_layer_drift_nll_correlation=correlation(relative[:, -1], loss_delta),
+            truncated_samples=sum(mb.get('truncated', [])),
+            pooled_token_texts=mb.get('pooled_token_texts', []),
+            note='Within-group CKA uses small groups; descriptive and noisy, not a causal test.')
+        (dest / 'diagnostics.json').write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2))
         selected = {}
         for key in sorted(k for k in before.files if k.startswith('module_')):
             a, b = before[key], after[key]
@@ -237,7 +307,7 @@ def main():
     e.add_argument('--out', required=True, help='Output .npz filename')
     e.add_argument('--device', default='auto')
     e.add_argument('--dtype', choices=['float32', 'float16', 'bfloat16'], default='bfloat16')
-    e.add_argument('--pool', choices=['last', 'mean'], default='last')
+    e.add_argument('--pool', choices=[*POOLS, 'all'], default='mean')
     e.add_argument('--layers', type=int, nargs='+', help='Module layers; block states always include all layers')
     e.add_argument('--max-length', type=int, default=128)
     e.add_argument('--limit', type=int, default=100)
