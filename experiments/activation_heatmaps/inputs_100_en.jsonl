@@ -1,0 +1,100 @@
+{"id": "en_000", "group": "greeting", "text": "Hello, how are you? I was talking to my friend about reading a book."}
+{"id": "en_001", "group": "greeting", "text": "Hello, how are you? I was talking to the teacher about preparing a meal."}
+{"id": "en_002", "group": "greeting", "text": "Hello, how are you? I was talking to the student about writing a letter."}
+{"id": "en_003", "group": "greeting", "text": "Hello, how are you? I was talking to the doctor about planning a trip."}
+{"id": "en_004", "group": "greeting", "text": "Hello, how are you? I was talking to the driver about learning a language."}
+{"id": "en_005", "group": "greeting", "text": "Hello, how are you? I was talking to the visitor about watching a movie."}
+{"id": "en_006", "group": "greeting", "text": "Hello, how are you? I was talking to the librarian about fixing a bicycle."}
+{"id": "en_007", "group": "greeting", "text": "Hello, how are you? I was talking to the engineer about taking a walk."}
+{"id": "en_008", "group": "greeting", "text": "Hello, how are you? I was talking to the musician about painting a picture."}
+{"id": "en_009", "group": "greeting", "text": "Hello, how are you? I was talking to the shopkeeper about listening to music."}
+{"id": "en_010", "group": "greeting", "text": "Hello, how are you? I was talking to my neighbor about cleaning the room."}
+{"id": "en_011", "group": "greeting", "text": "Hello, how are you? I was talking to the researcher about studying history."}
+{"id": "en_012", "group": "greeting", "text": "Hello, how are you? I was talking to the farmer about checking the schedule."}
+{"id": "en_013", "group": "greeting", "text": "Hello, how are you? I was talking to the artist about organizing a meeting."}
+{"id": "en_014", "group": "greeting", "text": "Hello, how are you? I was talking to the nurse about watering the plants."}
+{"id": "en_015", "group": "greeting", "text": "Hello, how are you? I was talking to the waiter about solving a puzzle."}
+{"id": "en_016", "group": "greeting", "text": "Hello, how are you? I was talking to the scientist about taking photographs."}
+{"id": "en_017", "group": "greeting", "text": "Hello, how are you? I was talking to the coach about making a shopping list."}
+{"id": "en_018", "group": "greeting", "text": "Hello, how are you? I was talking to the photographer about practicing the piano."}
+{"id": "en_019", "group": "greeting", "text": "Hello, how are you? I was talking to the traveler about looking for a notebook."}
+{"id": "en_020", "group": "description", "text": "Yesterday, my friend spent an hour reading a book before going home."}
+{"id": "en_021", "group": "description", "text": "Yesterday, the teacher spent an hour preparing a meal before going home."}
+{"id": "en_022", "group": "description", "text": "Yesterday, the student spent an hour writing a letter before going home."}
+{"id": "en_023", "group": "description", "text": "Yesterday, the doctor spent an hour planning a trip before going home."}
+{"id": "en_024", "group": "description", "text": "Yesterday, the driver spent an hour learning a language before going home."}
+{"id": "en_025", "group": "description", "text": "Yesterday, the visitor spent an hour watching a movie before going home."}
+{"id": "en_026", "group": "description", "text": "Yesterday, the librarian spent an hour fixing a bicycle before going home."}
+{"id": "en_027", "group": "description", "text": "Yesterday, the engineer spent an hour taking a walk before going home."}
+{"id": "en_028", "group": "description", "text": "Yesterday, the musician spent an hour painting a picture before going home."}
+{"id": "en_029", "group": "description", "text": "Yesterday, the shopkeeper spent an hour listening to music before going home."}
+{"id": "en_030", "group": "description", "text": "Yesterday, my neighbor spent an hour cleaning the room before going home."}
+{"id": "en_031", "group": "description", "text": "Yesterday, the researcher spent an hour studying history before going home."}
+{"id": "en_032", "group": "description", "text": "Yesterday, the farmer spent an hour checking the schedule before going home."}
+{"id": "en_033", "group": "description", "text": "Yesterday, the artist spent an hour organizing a meeting before going home."}
+{"id": "en_034", "group": "description", "text": "Yesterday, the nurse spent an hour watering the plants before going home."}
+{"id": "en_035", "group": "description", "text": "Yesterday, the waiter spent an hour solving a puzzle before going home."}
+{"id": "en_036", "group": "description", "text": "Yesterday, the scientist spent an hour taking photographs before going home."}
+{"id": "en_037", "group": "description", "text": "Yesterday, the coach spent an hour making a shopping list before going home."}
+{"id": "en_038", "group": "description", "text": "Yesterday, the photographer spent an hour practicing the piano before going home."}
+{"id": "en_039", "group": "description", "text": "Yesterday, the traveler spent an hour looking for a notebook before going home."}
+{"id": "en_040", "group": "request", "text": "Could you ask my friend whether they need help with reading a book?"}
+{"id": "en_041", "group": "request", "text": "Could you ask the teacher whether they need help with preparing a meal?"}
+{"id": "en_042", "group": "request", "text": "Could you ask the student whether they need help with writing a letter?"}
+{"id": "en_043", "group": "request", "text": "Could you ask the doctor whether they need help with planning a trip?"}
+{"id": "en_044", "group": "request", "text": "Could you ask the driver whether they need help with learning a language?"}
+{"id": "en_045", "group": "request", "text": "Could you ask the visitor whether they need help with watching a movie?"}
+{"id": "en_046", "group": "request", "text": "Could you ask the librarian whether they need help with fixing a bicycle?"}
+{"id": "en_047", "group": "request", "text": "Could you ask the engineer whether they need help with taking a walk?"}
+{"id": "en_048", "group": "request", "text": "Could you ask the musician whether they need help with painting a picture?"}
+{"id": "en_049", "group": "request", "text": "Could you ask the shopkeeper whether they need help with listening to music?"}
+{"id": "en_050", "group": "request", "text": "Could you ask my neighbor whether they need help with cleaning the room?"}
+{"id": "en_051", "group": "request", "text": "Could you ask the researcher whether they need help with studying history?"}
+{"id": "en_052", "group": "request", "text": "Could you ask the farmer whether they need help with checking the schedule?"}
+{"id": "en_053", "group": "request", "text": "Could you ask the artist whether they need help with organizing a meeting?"}
+{"id": "en_054", "group": "request", "text": "Could you ask the nurse whether they need help with watering the plants?"}
+{"id": "en_055", "group": "request", "text": "Could you ask the waiter whether they need help with solving a puzzle?"}
+{"id": "en_056", "group": "request", "text": "Could you ask the scientist whether they need help with taking photographs?"}
+{"id": "en_057", "group": "request", "text": "Could you ask the coach whether they need help with making a shopping list?"}
+{"id": "en_058", "group": "request", "text": "Could you ask the photographer whether they need help with practicing the piano?"}
+{"id": "en_059", "group": "request", "text": "Could you ask the traveler whether they need help with looking for a notebook?"}
+{"id": "en_060", "group": "condition", "text": "If my friend finishes reading a book early, we can meet this afternoon."}
+{"id": "en_061", "group": "condition", "text": "If the teacher finishes preparing a meal early, we can meet this afternoon."}
+{"id": "en_062", "group": "condition", "text": "If the student finishes writing a letter early, we can meet this afternoon."}
+{"id": "en_063", "group": "condition", "text": "If the doctor finishes planning a trip early, we can meet this afternoon."}
+{"id": "en_064", "group": "condition", "text": "If the driver finishes learning a language early, we can meet this afternoon."}
+{"id": "en_065", "group": "condition", "text": "If the visitor finishes watching a movie early, we can meet this afternoon."}
+{"id": "en_066", "group": "condition", "text": "If the librarian finishes fixing a bicycle early, we can meet this afternoon."}
+{"id": "en_067", "group": "condition", "text": "If the engineer finishes taking a walk early, we can meet this afternoon."}
+{"id": "en_068", "group": "condition", "text": "If the musician finishes painting a picture early, we can meet this afternoon."}
+{"id": "en_069", "group": "condition", "text": "If the shopkeeper finishes listening to music early, we can meet this afternoon."}
+{"id": "en_070", "group": "condition", "text": "If my neighbor finishes cleaning the room early, we can meet this afternoon."}
+{"id": "en_071", "group": "condition", "text": "If the researcher finishes studying history early, we can meet this afternoon."}
+{"id": "en_072", "group": "condition", "text": "If the farmer finishes checking the schedule early, we can meet this afternoon."}
+{"id": "en_073", "group": "condition", "text": "If the artist finishes organizing a meeting early, we can meet this afternoon."}
+{"id": "en_074", "group": "condition", "text": "If the nurse finishes watering the plants early, we can meet this afternoon."}
+{"id": "en_075", "group": "condition", "text": "If the waiter finishes solving a puzzle early, we can meet this afternoon."}
+{"id": "en_076", "group": "condition", "text": "If the scientist finishes taking photographs early, we can meet this afternoon."}
+{"id": "en_077", "group": "condition", "text": "If the coach finishes making a shopping list early, we can meet this afternoon."}
+{"id": "en_078", "group": "condition", "text": "If the photographer finishes practicing the piano early, we can meet this afternoon."}
+{"id": "en_079", "group": "condition", "text": "If the traveler finishes looking for a notebook early, we can meet this afternoon."}
+{"id": "en_080", "group": "contrast", "text": "Although my friend enjoys reading a book, they do not have much time for it today."}
+{"id": "en_081", "group": "contrast", "text": "Although the teacher enjoys preparing a meal, they do not have much time for it today."}
+{"id": "en_082", "group": "contrast", "text": "Although the student enjoys writing a letter, they do not have much time for it today."}
+{"id": "en_083", "group": "contrast", "text": "Although the doctor enjoys planning a trip, they do not have much time for it today."}
+{"id": "en_084", "group": "contrast", "text": "Although the driver enjoys learning a language, they do not have much time for it today."}
+{"id": "en_085", "group": "contrast", "text": "Although the visitor enjoys watching a movie, they do not have much time for it today."}
+{"id": "en_086", "group": "contrast", "text": "Although the librarian enjoys fixing a bicycle, they do not have much time for it today."}
+{"id": "en_087", "group": "contrast", "text": "Although the engineer enjoys taking a walk, they do not have much time for it today."}
+{"id": "en_088", "group": "contrast", "text": "Although the musician enjoys painting a picture, they do not have much time for it today."}
+{"id": "en_089", "group": "contrast", "text": "Although the shopkeeper enjoys listening to music, they do not have much time for it today."}
+{"id": "en_090", "group": "contrast", "text": "Although my neighbor enjoys cleaning the room, they do not have much time for it today."}
+{"id": "en_091", "group": "contrast", "text": "Although the researcher enjoys studying history, they do not have much time for it today."}
+{"id": "en_092", "group": "contrast", "text": "Although the farmer enjoys checking the schedule, they do not have much time for it today."}
+{"id": "en_093", "group": "contrast", "text": "Although the artist enjoys organizing a meeting, they do not have much time for it today."}
+{"id": "en_094", "group": "contrast", "text": "Although the nurse enjoys watering the plants, they do not have much time for it today."}
+{"id": "en_095", "group": "contrast", "text": "Although the waiter enjoys solving a puzzle, they do not have much time for it today."}
+{"id": "en_096", "group": "contrast", "text": "Although the scientist enjoys taking photographs, they do not have much time for it today."}
+{"id": "en_097", "group": "contrast", "text": "Although the coach enjoys making a shopping list, they do not have much time for it today."}
+{"id": "en_098", "group": "contrast", "text": "Although the photographer enjoys practicing the piano, they do not have much time for it today."}
+{"id": "en_099", "group": "contrast", "text": "Although the traveler enjoys looking for a notebook, they do not have much time for it today."}

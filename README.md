@@ -1,4 +1,21 @@
+## Route B: controlled continual pretraining
+
+Run `bash run_route_b_forgetting.sh` on a RunPod PyTorch GPU image to train
+SmolLM2-360M independently on Chinese-only, English-only and 50/50 mixed
+Wikipedia, evaluate fixed held-out text, and generate checkpoint heatmaps.
+See [the Route B guide](experiments/route_b_forgetting/README.md) for budgets,
+output files and interpretation limits.
+
 # Multilingual Training History -> Future Language Plasticity (Pilot)
+
+## Fixed-input activation heatmaps
+
+Run `bash run_activation_heatmaps.sh --pair all --pool all` to compare the two public
+TinyLlama v1.1 English-dominant / Chinese-English branches on the same 100 inputs.
+Use `--pair all` for all three small-model pairs, or `--before` / `--after` for
+your own checkpoints. The script generates PNGs, CSVs, an HTML gallery, and a
+downloadable result ZIP. See [the heatmap guide](experiments/activation_heatmaps/README.md)
+for RunPod instructions and interpretation limits.
 
 Hypothesis: holding source languages, source examples, token budget, compute, and target data fixed, does the **schedule** of multilingual exposure change how quickly the model adapts to the same later target language?
 
