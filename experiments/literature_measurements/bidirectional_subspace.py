@@ -23,6 +23,8 @@ from invariance.train_sequence import evaluate, load_blocks, make_loader
 def eval_direction(anchor, adapted, blocks, batch_size, device, layer, spaces,
                    alpha, energy_mode, direction, bf16):
     source, target = (anchor, adapted) if direction == "restore" else (adapted, anchor)
+    source.eval()
+    target.eval()
     holder = {}
     sums = {name: {"loss": 0., "tokens": 0, "energy": 0., "natural": 0., "count": 0}
             for name in spaces}
@@ -105,10 +107,11 @@ def main():
     core, spaces = load_core(a.core_file, a.spaces,
                              allow_legacy=a.allow_legacy_core)
     layer = int(core["layer"])
-    bf16 = (not a.no_bf16 and str(a.device).startswith("cuda")
+    device = torch.device(a.device)
+    bf16 = (not a.no_bf16 and device.type == "cuda"
             and torch.cuda.is_available() and torch.cuda.is_bf16_supported())
-    anchor, _ = load_model(a.anchor_checkpoint, a.device, bf16=bf16)
-    adapted, _ = load_model(a.adapted_checkpoint, a.device, bf16=bf16)
+    anchor, _ = load_model(a.anchor_checkpoint, device, bf16=bf16)
+    adapted, _ = load_model(a.adapted_checkpoint, device, bf16=bf16)
     for model in (anchor, adapted):
         model.eval()
         for p in model.parameters():
@@ -125,13 +128,17 @@ def main():
             blocks = blocks[:a.max_blocks]
         data[lang] = blocks
         base[lang] = {
-            "anchor": evaluate(anchor, blocks, a.batch_size, a.device, bf16),
-            "adapted": evaluate(adapted, blocks, a.batch_size, a.device, bf16)
+            "anchor": evaluate(anchor, blocks, a.batch_size, device, bf16),
+            "adapted": evaluate(adapted, blocks, a.batch_size, device, bf16)
         }
+    # invariance.train_sequence.evaluate() switches models back to train mode.
+    # Disable dropout before all causal probes and baseline comparisons.
+    anchor.eval()
+    adapted.eval()
     results = []
     for lang, blocks in data.items():
         for direction in ("restore", "induce"):
-            outcomes = eval_direction(anchor, adapted, blocks, a.batch_size, a.device,
+            outcomes = eval_direction(anchor, adapted, blocks, a.batch_size, device,
                                       layer, spaces, a.alpha, a.energy_mode, direction, bf16)
             target_key = "adapted" if direction == "restore" else "anchor"
             base_loss = base[lang][target_key]
