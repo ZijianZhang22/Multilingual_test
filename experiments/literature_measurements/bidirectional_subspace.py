@@ -28,10 +28,11 @@ def eval_direction(anchor, adapted, blocks, batch_size, device, layer, spaces,
     holder = {}
     sums = {name: {"loss": 0., "tokens": 0, "energy": 0., "natural": 0., "count": 0}
             for name in spaces}
+    detail = []
     hs = get_layers(source)[layer-1].register_forward_hook(
         lambda _m, _i, output: holder.update(h=hidden_from_output(output).detach()))
     try:
-        for (x,) in make_loader(blocks, batch_size):
+        for batch_idx, (x,) in enumerate(make_loader(blocks, batch_size)):
             x = x.to(device)
             holder.clear()
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
@@ -45,10 +46,11 @@ def eval_direction(anchor, adapted, blocks, batch_size, device, layer, spaces,
                     captured["h"] = hidden_from_output(output).detach()
                 cap = get_layers(target)[layer-1].register_forward_hook(capture)
                 try:
-                    target(input_ids=x, use_cache=False)
+                    target_baseline = target(input_ids=x, labels=x, use_cache=False)
                 finally:
                     cap.remove()
                 htarget = captured["h"]
+                baseline_nll = float(target_baseline.loss)
                 if htarget.shape != source_hidden.shape:
                     raise ValueError("Anchor/Adapted states not aligned")
                 delta = source_hidden.float() - htarget.float()
@@ -72,14 +74,26 @@ def eval_direction(anchor, adapted, blocks, batch_size, device, layer, spaces,
                     stats["energy"] += float(change.square().sum())
                     stats["natural"] += norms[(name, rank)] ** 2
                     stats["count"] += change.numel()
+                    detail.append({
+                        "direction": direction, "batch_idx": batch_idx,
+                        "subspace": name, "rank": rank,
+                        "alpha": alpha, "energy_mode": energy_mode,
+                        "target_baseline_nll": baseline_nll,
+                        "intervention_nll": float(out.loss),
+                        "loss_delta": float(out.loss) - baseline_nll,
+                        "eval_tokens": n,
+                        "actual_delta_l2": float(change.norm()),
+                        "natural_delta_l2": norms[(name, rank)],
+                    })
     finally:
         hs.remove()
-    return {name: {
+    summary = {name: {
         "nll": s["loss"]/s["tokens"],
         "mean_delta_rms": (s["energy"]/s["count"]) ** .5,
         "natural_delta_rms": (s["natural"]/s["count"]) ** .5,
         "tokens": s["tokens"]
     } for name, s in sums.items() if s["tokens"]}
+    return summary, detail
 
 
 def main():
@@ -136,10 +150,12 @@ def main():
     anchor.eval()
     adapted.eval()
     results = []
+    all_detail = []
     for lang, blocks in data.items():
         for direction in ("restore", "induce"):
-            outcomes = eval_direction(anchor, adapted, blocks, a.batch_size, device,
+            outcomes, detail = eval_direction(anchor, adapted, blocks, a.batch_size, device,
                                       layer, spaces, a.alpha, a.energy_mode, direction, bf16)
+            all_detail.extend({**r, "language": lang, "layer": layer} for r in detail)
             target_key = "adapted" if direction == "restore" else "anchor"
             base_loss = base[lang][target_key]
             for name, stats in outcomes.items():
@@ -168,6 +184,7 @@ def main():
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     save_csv(out/"bidirectional_subspace_summary.csv", results)
+    save_csv(out/"bidirectional_batch_level.csv", all_detail)
     (out/"bidirectional_protocol.json").write_text(json.dumps({
         **vars(a), "core_fit_protocol": core.get("fit_protocol", "legacy"),
         "layer": layer, "hook_site": "decoder block outputs (all tokens)",
