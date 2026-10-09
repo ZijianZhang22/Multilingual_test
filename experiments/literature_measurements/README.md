@@ -12,7 +12,7 @@ and **Chinese adaptation gain** on held-out Wiki validation blocks.
 | `extract_attention.py` + `layer_similarity.py` | LayerMoE (ACL 2025) | Layerwise all-pairs cross-language token cosine, plus a global-mean-centered control | Similarity, *not* causal shared functionality |
 | `layer_similarity.py` | First Align, then Predict (EACL 2021) | Pair-ID-aligned linear CKA | CKA requires matching examples; not proof of causal alignment |
 | `affine_projection.py` | The Geometry of Multilingual Language Model Representations (EMNLP 2022) | Same-language, cross-language, and mean-recentered cross-language affine PCA interventions, PPL ratio | **Decoder-only causal-LM adaptation**, not the source masked-LM evaluation |
-| `transfer_probe.py` | Universal Grammatical Relations (ACL 2020) | In-language, direct, leave-one-language-out, joint XNLI task probes | **Task-label transfer**; not a replication of their structural/syntactic probe |
+| `retrieval.py` | On the Language Neutrality (Findings EMNLP 2020) | Raw, global-mean- and language-mean-centered held-out aligned-pair retrieval R@1 | Decodability/alignment, not causal usage |\n| `transfer_probe.py` | Universal Grammatical Relations (ACL 2020) | In-language, direct, leave-one-language-out, joint XNLI task probes | **Task-label transfer**; not a replication of their structural/syntactic probe |
 | `layer_patch.py` | Layer intervention / causal tracing literature | Full-layer Anchor->Adapted activation patching; optional layer weight restoration | The effective intervention site need not be the original site of damage |
 | `association.py` | Our research question | Join per-layer similarity changes and EN patching improvements | Correlations are exploratory, *not* independent causal evidence |
 
@@ -186,6 +186,41 @@ This evaluates whether *attention-output language similarity* correlates
 with *full residual layer replacement*. They are different measurement sites;
 correlations are exploratory. For a like-for-like site comparison, extract
 `--source residual` and repeat the layer similarity step.
+
+### 5. Language Neutrality: held-out retrieval after mean centering
+
+Fit language means on an **aligned validation** set and evaluate retrieval on a
+separate **aligned test** set. Do not reuse the aligned test examples for
+subspace fitting or mean estimation.
+
+```bash
+python invariance/prepare_aligned_xnli.py --split validation \
+  --languages en zh fr --n_examples 300 \
+  --out_file "$OUT/xnli_aligned_fit.jsonl"
+# The aligned_test file was created earlier in the workflow.
+for name in anchor adapted; do
+  if [ "$name" = anchor ]; then CKPT="$ANCHOR"; else CKPT="$ADAPTED"; fi
+  for part in fit test; do
+    if [ "$part" = fit ]; then INPUT="$OUT/xnli_aligned_fit.jsonl"; else INPUT="$OUT/xnli_aligned_test.jsonl"; fi
+    python -m experiments.literature_measurements.extract_attention \
+      --checkpoint "$CKPT" --data_file "$INPUT" \
+      --out_file "$OUT/${name}_aligned_${part}_residual.pt" \
+      --split aligned --languages en zh fr --source residual \
+      --pool mean --layers 12,20,24 --max_rows_per_language 250
+  done
+done
+python -m experiments.literature_measurements.retrieval \
+  --anchor_fit "$OUT/anchor_aligned_fit_residual.pt" \
+  --anchor_eval "$OUT/anchor_aligned_test_residual.pt" \
+  --adapted_fit "$OUT/adapted_aligned_fit_residual.pt" \
+  --adapted_eval "$OUT/adapted_aligned_test_residual.pt" \
+  --languages en zh fr --out_csv "$OUT/mean_centered_retrieval.csv"
+```
+
+Outputs directional R@1 on unseen aligned pairs for raw vectors, global-mean
+centering and language-specific centering. Centers use **fit pairs only**;
+the script checks pair-ID separation. The score is retrieval/representation
+alignment, not proof the model *uses* these vectors in its computations.
 
 ## Experimental hygiene
 
