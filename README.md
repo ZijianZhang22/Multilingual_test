@@ -1,3 +1,11 @@
+## Route B: controlled continual pretraining
+
+Run `bash run_route_b_forgetting.sh` on a RunPod PyTorch GPU image to train
+SmolLM2-360M independently on Chinese-only, English-only and 50/50 mixed
+Wikipedia, evaluate fixed held-out text, and generate checkpoint heatmaps.
+See [the Route B guide](experiments/route_b_forgetting/README.md) for budgets,
+output files and interpretation limits.
+
 # Multilingual Training History -> Future Language Plasticity (Pilot)
 
 ## Fixed-input activation heatmaps

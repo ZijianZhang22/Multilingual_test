@@ -1,0 +1,6 @@
+transformers>=4.51,<6
+datasets>=3,<6
+accelerate>=1,<2
+numpy>=1.26
+matplotlib>=3.8
+packaging>=24
