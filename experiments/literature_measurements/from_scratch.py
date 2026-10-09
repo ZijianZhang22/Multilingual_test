@@ -151,6 +151,7 @@ def parse_args(argv=None):
     p.add_argument("--aligned-test-examples", type=int, default=120)
     p.add_argument("--targets-per-lang", type=int, default=6)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--no-resume", action="store_true")
     p.add_argument("--archive-only", action="store_true")
     p.add_argument("--include-pt", action="store_true")
     a = p.parse_args(argv)
