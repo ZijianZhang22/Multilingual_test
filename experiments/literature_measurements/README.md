@@ -1,3 +1,61 @@
+## Starting with NO checkpoints (train from the public Qwen base)
+
+The from-scratch runner now makes the necessary EN Anchor and ZH Adapted
+checkpoints before measuring Drift / Transfer / ISR. This is sequential
+**full fine-tuning**, using the repository's existing
+`train_anchor_adapt.py`, not LoRA.
+
+Run on a high-memory CUDA GPU with enough persistent storage:
+
+```bash
+cd /workspace/Multilingual_test
+git fetch origin
+git checkout feature/literature-measurement-suite
+git pull --ff-only
+
+bash experiments/literature_measurements/run_from_scratch.sh \
+  --model-name Qwen/Qwen2.5-3B \
+  --out /workspace/literature_3b_seed0 \
+  --mode pilot
+```
+
+This sequence prepares EN/ZH Wikipedia training and validation tensors
+(`OUT/wiki`), downloads the public Qwen base from Hugging Face, trains
+EN then ZH with AdamW (20% of the prepared ZH training blocks by default),
+saves `OUT/training/anchor` and `OUT/training/adapted`, evaluates
+EN forgetting/ZH gain, and runs the prior pilot workflow under
+`OUT/analysis`. It packages `OUT_results.tar.gz` (without model weights).
+
+For an inexpensive correctness smoke test, run 0.5B in a NEW output folder:
+
+```bash
+bash experiments/literature_measurements/run_from_scratch.sh \
+  --model-name Qwen/Qwen2.5-0.5B \
+  --out /workspace/literature_smoke_0p5 \
+  --train-tokens 131072 --val-tokens 16384 --block-size 256
+```
+
+The smoke setting is **not** a paper-comparable forgetting experiment;
+the default 3B setup likewise requires replication before making claims.
+Run all additional literature analyses after the pilot with `--mode full`
+in a **new output directory**, or launch `run_all.sh` on the saved
+checkpoints. `--dry-run` previews the bootstrap and analysis commands.
+
+**Resource warning:** full 3B AdamW fine-tuning can exceed a 48 GB GPU.
+An A100 80 GB-class GPU is safer. The script does not implicitly switch
+models, parameter-efficient tuning or optimizer algorithms after OOM.
+
+**Storage warning:** `OUT/training/anchor` and
+`OUT/training/adapted` are NOT included in the default archive;
+keep the complete `OUT/training` folder on persistent storage before
+shutting down RunPod.
+
+**Resume warning:** dataset preparation is skipped if verified outputs
+remain. If training stops during ZH adaptation, the inherited two-stage
+trainer will rerun the EN and ZH stages rather than resume an optimizer
+state. Preserve sufficient GPU time for this first full run.
+
+---
 ## One-command runner (recommended)
 
 Once the code is on your RunPod, **one command** runs the selected workflow
