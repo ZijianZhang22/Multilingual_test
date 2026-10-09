@@ -1,3 +1,52 @@
+## Second-round tests on an existing live Pod (NO retraining)
+
+If the original `/workspace/literature_3b_seed0` directory is still on the
+Pod, you do **not** need to re-run Wikipedia preparation, EN/ ZH training, core
+subspace fitting, or all previous literature measurements.
+
+```bash
+cd /workspace/Multilingual_test
+git fetch origin
+git checkout feature/literature-measurement-suite
+git pull --ff-only
+
+python -m experiments.literature_measurements.run_followup \
+  --source /workspace/literature_3b_seed0 \
+  --out /workspace/literature_3b_followup \
+  --semantic-targets-per-lang 30 \
+  --max-blocks 128 \
+  --batch-size 2
+```
+
+The follow-up uses the existing **Layer 20 last-pool Drift, Transfer,
+ISR-Cov and ISR-Multiclass** bases and matched-rank random controls:
+- Semantic same-translation/same-label/different-label donors for 30 EN + 30
+  ZH targets (up from 6 each) with both raw and matched-energy injections,
+  each alpha=1.0, using a fresh deterministic target/donor seed.
+- Old/new Wiki losses with reversible adapted↔anchor interventions, alpha
+  0.25, 0.5, and 1.0 using matched energies; an additional raw alpha=1
+  comparison. All runs use the full available 128-block validation budget
+  unless overridden.
+- Every bidirectional run now records
+  `bidirectional_batch_level.csv` containing paired baseline and patched
+  batch-level NLL, for uncertainty estimation. Summary CSVs remain unchanged.
+
+New results live only in the supplied `--out` directory and include logs and
+a compressed archive; original training, model weights, first Full experiment
+and old summary CSVs are untouched. Interrupted finished subruns are skipped.
+Use `--dry-run` to preview; use `--archive-only` to package results.
+This **is a targeted verification, not another 24-step Full run**.
+
+Important caveats: with only ~0.0027 held-out EN forgetting, report absolute
+loss differences and confidence intervals, not only normalized restoration %.
+Same XNLI test split can be reused for replication of effects but is not a
+new independent test split, and tests across strengths/conditions require
+multiple-comparisons awareness. Increasing semantic sample sizes will increase
+GPU runtime. The first-run 3B checkpoints and core are still required and
+must remain on persistent Pod storage.
+
+---
+
 ## Starting with NO checkpoints (train from the public Qwen base)
 
 The from-scratch runner now makes the necessary EN Anchor and ZH Adapted
